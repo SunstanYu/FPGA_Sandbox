@@ -213,6 +213,7 @@ parameter MAT_SAND  = 4'd1;
 parameter MAT_WATER = 4'd2;
 parameter MAT_WALL  = 4'd3;
 parameter MAT_FIRE  = 4'd4;
+parameter MAT_SMOKE = 4'd5;
 
 // VGA -> Grid coordinate mapping (640x480 -> 320x240, divide by 2)
 wire [8:0] grid_read_x = next_x[9:1]; 
@@ -323,8 +324,16 @@ wire west_is_fire    = fire_same_row && (grid_read_x > 9'd0) &&
                        (grid_read_x == fire_prev_gx + 9'd1) && (fire_prev_mat == MAT_FIRE);
 wire north_is_fire   = (north_mat_r == MAT_FIRE);
 wire fire_neighbor   = north_is_fire || west_is_fire;
+reg [23:0] fire_pulse_ctr;
+always @(posedge M10k_pll or negedge sys_reset_n) begin
+    if (!sys_reset_n)
+        fire_pulse_ctr <= 24'd0;
+    else
+        fire_pulse_ctr <= fire_pulse_ctr + 24'd1;
+end
+
 wire [15:0] fire_phase = hw_cycle_count[19:4] ^ hw_cycle_count[31:20] ^
-                         {grid_read_x[7:0], grid_read_y[7:0]};
+                         {grid_read_x[7:0], grid_read_y[7:0]} ^ fire_pulse_ctr[23:8];
 wire fire_core_hot   = fire_phase[0];
 wire fire_glow_tick  = fire_phase[1] ^ fire_phase[6];
 
@@ -338,6 +347,7 @@ always @(*) begin
         MAT_WATER: final_vga_color = 8'b000_010_11; // Blue
         MAT_WALL:  final_vga_color = 8'b011_011_01; // Gray
         MAT_FIRE:  final_vga_color = fire_core_hot ? 8'b111_010_00 : 8'b101_000_00;
+        MAT_SMOKE: final_vga_color = fire_glow_tick ? 8'b100_100_10 : 8'b010_010_01;
         default:   final_vga_color = 8'b000_000_00;
     endcase
 end
@@ -501,6 +511,14 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                         ca_we         <= 1'b1;
                         ca_write_addr <= (cy * GRID_WIDTH) + cx;
                         ca_write_data <= MAT_FIRE;
+                        state         <= S_NEXT_PIXEL;
+                    end
+
+                    MAT_SMOKE: begin
+                        // Smoke is static for now: keep cell in place.
+                        ca_we         <= 1'b1;
+                        ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                        ca_write_data <= MAT_SMOKE;
                         state         <= S_NEXT_PIXEL;
                     end
 
