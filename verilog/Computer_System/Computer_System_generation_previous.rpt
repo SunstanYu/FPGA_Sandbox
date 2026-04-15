@@ -1,0 +1,198 @@
+Info: Starting: Create HDL design files for synthesis
+Info: qsys-generate C:\Users\zc569\Desktop\Lab2_Week3_V1\Lab2_Week3_V1\Lab2_Week3\Lab2-week\VGA_to_M10k\VGA_to_M10k\VGA_to_M10k\verilog\Computer_System.qsys --synthesis=VERILOG --output-directory=C:\Users\zc569\Desktop\Lab2_Week3_V1\Lab2_Week3_V1\Lab2_Week3\Lab2-week\VGA_to_M10k\VGA_to_M10k\VGA_to_M10k\verilog\Computer_System\synthesis --family="Cyclone V" --part=5CSEMA5F31C6
+Progress: Loading verilog/Computer_System.qsys
+Progress: Reading input file
+Progress: Adding ARM_A9_HPS [altera_hps 23.1]
+Progress: Parameterizing module ARM_A9_HPS
+Progress: Adding System_PLL [altera_up_avalon_sys_sdram_pll 18.0]
+Progress: Parameterizing module System_PLL
+Progress: Adding brush_mat_pio [altera_avalon_pio 23.1]
+Progress: Parameterizing module brush_mat_pio
+Progress: Adding brush_we_pio [altera_avalon_pio 23.1]
+Progress: Parameterizing module brush_we_pio
+Progress: Adding brush_x_pio [altera_avalon_pio 23.1]
+Progress: Parameterizing module brush_x_pio
+Progress: Adding brush_y_pio [altera_avalon_pio 23.1]
+Progress: Parameterizing module brush_y_pio
+Progress: Adding done_pio [altera_avalon_pio 23.1]
+Progress: Parameterizing module done_pio
+Progress: Adding key_pio [altera_avalon_pio 23.1]
+Progress: Parameterizing module key_pio
+Progress: Adding m10k_pll [altera_pll 23.1]
+Progress: Parameterizing module m10k_pll
+Progress: Adding start_pio [altera_avalon_pio 23.1]
+Progress: Parameterizing module start_pio
+Progress: Adding timer_pio [altera_avalon_pio 23.1]
+Progress: Parameterizing module timer_pio
+Progress: Adding vga_pio [altera_pll 23.1]
+Progress: Parameterizing module vga_pio
+Progress: Building connections
+Progress: Parameterizing connections
+Progress: Validating
+Progress: Done reading input file
+Info: Computer_System.ARM_A9_HPS: HPS Main PLL counter settings: n = 0  m = 73
+Info: Computer_System.ARM_A9_HPS: HPS peripherial PLL counter settings: n = 0  m = 39
+Warning: Computer_System.ARM_A9_HPS: "Configuration/HPS-to-FPGA user 0 clock frequency" (desired_cfg_clk_mhz) requested 100.0 MHz, but only achieved 97.368421 MHz
+Warning: Computer_System.ARM_A9_HPS: "QSPI clock frequency" (desired_qspi_clk_mhz) requested 400.0 MHz, but only achieved 370.0 MHz
+Warning: Computer_System.ARM_A9_HPS: 1 or more output clock frequencies cannot be achieved precisely, consider revising desired output clock frequencies.
+Info: Computer_System.System_PLL: Refclk Freq: 50.0
+Info: Computer_System.done_pio: PIO inputs are not hardwired in test bench. Undefined values will be read from PIO inputs during simulation.
+Info: Computer_System.key_pio: PIO inputs are not hardwired in test bench. Undefined values will be read from PIO inputs during simulation.
+Info: Computer_System.m10k_pll: The legal reference clock frequency is 5.0 MHz..800.0 MHz
+Info: Computer_System.m10k_pll: Able to implement PLL with user settings
+Info: Computer_System.timer_pio: PIO inputs are not hardwired in test bench. Undefined values will be read from PIO inputs during simulation.
+Info: Computer_System.vga_pio: The legal reference clock frequency is 5.0 MHz..800.0 MHz
+Info: Computer_System.vga_pio: Able to implement PLL with user settings
+Info: Computer_System: Generating Computer_System "Computer_System" for QUARTUS_SYNTH
+Warning: ARM_A9_HPS.f2h_irq0: Cannot connect clock for irq_mapper.sender
+Warning: ARM_A9_HPS.f2h_irq0: Cannot connect reset for irq_mapper.sender
+Warning: ARM_A9_HPS.f2h_irq1: Cannot connect clock for irq_mapper_001.sender
+Warning: ARM_A9_HPS.f2h_irq1: Cannot connect reset for irq_mapper_001.sender
+Info: ARM_A9_HPS: "Running  for module: ARM_A9_HPS"
+Info: ARM_A9_HPS: HPS Main PLL counter settings: n = 0  m = 73
+Info: ARM_A9_HPS: HPS peripherial PLL counter settings: n = 0  m = 39
+Warning: ARM_A9_HPS: "Configuration/HPS-to-FPGA user 0 clock frequency" (desired_cfg_clk_mhz) requested 100.0 MHz, but only achieved 97.368421 MHz
+Warning: ARM_A9_HPS: "QSPI clock frequency" (desired_qspi_clk_mhz) requested 400.0 MHz, but only achieved 370.0 MHz
+Warning: ARM_A9_HPS: 1 or more output clock frequencies cannot be achieved precisely, consider revising desired output clock frequencies.
+Info: ARM_A9_HPS: "Computer_System" instantiated altera_hps "ARM_A9_HPS"
+Info: System_PLL: "Computer_System" instantiated altera_up_avalon_sys_sdram_pll "System_PLL"
+Info: brush_mat_pio: Starting RTL generation for module 'Computer_System_brush_mat_pio'
+Info: brush_mat_pio:   Generation command is [exec C:/intelfpga_lite/23.1/quartus/bin64/perl/bin/perl.exe -I C:/intelfpga_lite/23.1/quartus/bin64/perl/lib -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin/europa -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/common -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio -- C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio/generate_rtl.pl --name=Computer_System_brush_mat_pio --dir=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0002_brush_mat_pio_gen/ --quartus_dir=C:/intelfpga_lite/23.1/quartus --verilog --config=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0002_brush_mat_pio_gen//Computer_System_brush_mat_pio_component_configuration.pl  --do_build_sim=0  ]
+Info: brush_mat_pio: Done RTL generation for module 'Computer_System_brush_mat_pio'
+Info: brush_mat_pio: "Computer_System" instantiated altera_avalon_pio "brush_mat_pio"
+Info: brush_we_pio: Starting RTL generation for module 'Computer_System_brush_we_pio'
+Info: brush_we_pio:   Generation command is [exec C:/intelfpga_lite/23.1/quartus/bin64/perl/bin/perl.exe -I C:/intelfpga_lite/23.1/quartus/bin64/perl/lib -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin/europa -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/common -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio -- C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio/generate_rtl.pl --name=Computer_System_brush_we_pio --dir=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0003_brush_we_pio_gen/ --quartus_dir=C:/intelfpga_lite/23.1/quartus --verilog --config=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0003_brush_we_pio_gen//Computer_System_brush_we_pio_component_configuration.pl  --do_build_sim=0  ]
+Info: brush_we_pio: Done RTL generation for module 'Computer_System_brush_we_pio'
+Info: brush_we_pio: "Computer_System" instantiated altera_avalon_pio "brush_we_pio"
+Info: brush_x_pio: Starting RTL generation for module 'Computer_System_brush_x_pio'
+Info: brush_x_pio:   Generation command is [exec C:/intelfpga_lite/23.1/quartus/bin64/perl/bin/perl.exe -I C:/intelfpga_lite/23.1/quartus/bin64/perl/lib -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin/europa -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/common -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio -- C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio/generate_rtl.pl --name=Computer_System_brush_x_pio --dir=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0004_brush_x_pio_gen/ --quartus_dir=C:/intelfpga_lite/23.1/quartus --verilog --config=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0004_brush_x_pio_gen//Computer_System_brush_x_pio_component_configuration.pl  --do_build_sim=0  ]
+Info: brush_x_pio: Done RTL generation for module 'Computer_System_brush_x_pio'
+Info: brush_x_pio: "Computer_System" instantiated altera_avalon_pio "brush_x_pio"
+Info: brush_y_pio: Starting RTL generation for module 'Computer_System_brush_y_pio'
+Info: brush_y_pio:   Generation command is [exec C:/intelfpga_lite/23.1/quartus/bin64/perl/bin/perl.exe -I C:/intelfpga_lite/23.1/quartus/bin64/perl/lib -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin/europa -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/common -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio -- C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio/generate_rtl.pl --name=Computer_System_brush_y_pio --dir=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0005_brush_y_pio_gen/ --quartus_dir=C:/intelfpga_lite/23.1/quartus --verilog --config=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0005_brush_y_pio_gen//Computer_System_brush_y_pio_component_configuration.pl  --do_build_sim=0  ]
+Info: brush_y_pio: Done RTL generation for module 'Computer_System_brush_y_pio'
+Info: brush_y_pio: "Computer_System" instantiated altera_avalon_pio "brush_y_pio"
+Info: done_pio: Starting RTL generation for module 'Computer_System_done_pio'
+Info: done_pio:   Generation command is [exec C:/intelfpga_lite/23.1/quartus/bin64/perl/bin/perl.exe -I C:/intelfpga_lite/23.1/quartus/bin64/perl/lib -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin/europa -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/common -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio -- C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio/generate_rtl.pl --name=Computer_System_done_pio --dir=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0006_done_pio_gen/ --quartus_dir=C:/intelfpga_lite/23.1/quartus --verilog --config=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0006_done_pio_gen//Computer_System_done_pio_component_configuration.pl  --do_build_sim=0  ]
+Info: done_pio: Done RTL generation for module 'Computer_System_done_pio'
+Info: done_pio: "Computer_System" instantiated altera_avalon_pio "done_pio"
+Info: key_pio: Starting RTL generation for module 'Computer_System_key_pio'
+Info: key_pio:   Generation command is [exec C:/intelfpga_lite/23.1/quartus/bin64/perl/bin/perl.exe -I C:/intelfpga_lite/23.1/quartus/bin64/perl/lib -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin/europa -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/common -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio -- C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio/generate_rtl.pl --name=Computer_System_key_pio --dir=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0007_key_pio_gen/ --quartus_dir=C:/intelfpga_lite/23.1/quartus --verilog --config=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0007_key_pio_gen//Computer_System_key_pio_component_configuration.pl  --do_build_sim=0  ]
+Info: key_pio: Done RTL generation for module 'Computer_System_key_pio'
+Info: key_pio: "Computer_System" instantiated altera_avalon_pio "key_pio"
+Info: m10k_pll: "Computer_System" instantiated altera_pll "m10k_pll"
+Info: start_pio: Starting RTL generation for module 'Computer_System_start_pio'
+Info: start_pio:   Generation command is [exec C:/intelfpga_lite/23.1/quartus/bin64/perl/bin/perl.exe -I C:/intelfpga_lite/23.1/quartus/bin64/perl/lib -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin/europa -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/common -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio -- C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio/generate_rtl.pl --name=Computer_System_start_pio --dir=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0009_start_pio_gen/ --quartus_dir=C:/intelfpga_lite/23.1/quartus --verilog --config=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0009_start_pio_gen//Computer_System_start_pio_component_configuration.pl  --do_build_sim=0  ]
+Info: start_pio: Done RTL generation for module 'Computer_System_start_pio'
+Info: start_pio: "Computer_System" instantiated altera_avalon_pio "start_pio"
+Info: timer_pio: Starting RTL generation for module 'Computer_System_timer_pio'
+Info: timer_pio:   Generation command is [exec C:/intelfpga_lite/23.1/quartus/bin64/perl/bin/perl.exe -I C:/intelfpga_lite/23.1/quartus/bin64/perl/lib -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin/europa -I C:/intelfpga_lite/23.1/quartus/sopc_builder/bin -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/common -I C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio -- C:/intelfpga_lite/23.1/quartus/../ip/altera/sopc_builder_ip/altera_avalon_pio/generate_rtl.pl --name=Computer_System_timer_pio --dir=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0010_timer_pio_gen/ --quartus_dir=C:/intelfpga_lite/23.1/quartus --verilog --config=C:/Users/zc569/AppData/Local/Temp/alt0550_3928039502650375971.dir/0010_timer_pio_gen//Computer_System_timer_pio_component_configuration.pl  --do_build_sim=0  ]
+Info: timer_pio: Done RTL generation for module 'Computer_System_timer_pio'
+Info: timer_pio: "Computer_System" instantiated altera_avalon_pio "timer_pio"
+Info: vga_pio: "Computer_System" instantiated altera_pll "vga_pio"
+Info: avalon_st_adapter: Inserting error_adapter: error_adapter_0
+Info: avalon_st_adapter_001: Inserting error_adapter: error_adapter_0
+Info: avalon_st_adapter_002: Inserting error_adapter: error_adapter_0
+Info: avalon_st_adapter_003: Inserting error_adapter: error_adapter_0
+Info: avalon_st_adapter_004: Inserting error_adapter: error_adapter_0
+Info: avalon_st_adapter_005: Inserting error_adapter: error_adapter_0
+Info: avalon_st_adapter_006: Inserting error_adapter: error_adapter_0
+Info: avalon_st_adapter_007: Inserting error_adapter: error_adapter_0
+Info: mm_interconnect_0: "Computer_System" instantiated altera_mm_interconnect "mm_interconnect_0"
+Info: irq_mapper: "Computer_System" instantiated altera_irq_mapper "irq_mapper"
+Info: rst_controller: "Computer_System" instantiated altera_reset_controller "rst_controller"
+Info: fpga_interfaces: "ARM_A9_HPS" instantiated altera_interface_generator "fpga_interfaces"
+Info: hps_io: "ARM_A9_HPS" instantiated altera_hps_io "hps_io"
+Info: sys_pll: "System_PLL" instantiated altera_pll "sys_pll"
+Info: reset_from_locked: "System_PLL" instantiated altera_up_avalon_reset_from_locked_signal "reset_from_locked"
+Info: start_pio_s1_translator: "mm_interconnect_0" instantiated altera_merlin_slave_translator "start_pio_s1_translator"
+Info: ARM_A9_HPS_h2f_lw_axi_master_agent: "mm_interconnect_0" instantiated altera_merlin_axi_master_ni "ARM_A9_HPS_h2f_lw_axi_master_agent"
+Info: start_pio_s1_agent: "mm_interconnect_0" instantiated altera_merlin_slave_agent "start_pio_s1_agent"
+Info: start_pio_s1_agent_rsp_fifo: "mm_interconnect_0" instantiated altera_avalon_sc_fifo "start_pio_s1_agent_rsp_fifo"
+Info: router: "mm_interconnect_0" instantiated altera_merlin_router "router"
+Info: router_002: "mm_interconnect_0" instantiated altera_merlin_router "router_002"
+Info: ARM_A9_HPS_h2f_lw_axi_master_wr_limiter: "mm_interconnect_0" instantiated altera_merlin_traffic_limiter "ARM_A9_HPS_h2f_lw_axi_master_wr_limiter"
+Info: Reusing file C:/Users/zc569/Desktop/Lab2_Week3_V1/Lab2_Week3_V1/Lab2_Week3/Lab2-week/VGA_to_M10k/VGA_to_M10k/VGA_to_M10k/verilog/Computer_System/synthesis/submodules/altera_avalon_sc_fifo.v
+Info: start_pio_s1_burst_adapter: "mm_interconnect_0" instantiated altera_merlin_burst_adapter "start_pio_s1_burst_adapter"
+Info: Reusing file C:/Users/zc569/Desktop/Lab2_Week3_V1/Lab2_Week3_V1/Lab2_Week3/Lab2-week/VGA_to_M10k/VGA_to_M10k/VGA_to_M10k/verilog/Computer_System/synthesis/submodules/altera_merlin_address_alignment.sv
+Info: Reusing file C:/Users/zc569/Desktop/Lab2_Week3_V1/Lab2_Week3_V1/Lab2_Week3/Lab2-week/VGA_to_M10k/VGA_to_M10k/VGA_to_M10k/verilog/Computer_System/synthesis/submodules/altera_avalon_st_pipeline_base.v
+Info: cmd_demux: "mm_interconnect_0" instantiated altera_merlin_demultiplexer "cmd_demux"
+Info: cmd_mux: "mm_interconnect_0" instantiated altera_merlin_multiplexer "cmd_mux"
+Info: rsp_demux: "mm_interconnect_0" instantiated altera_merlin_demultiplexer "rsp_demux"
+Info: rsp_mux: "mm_interconnect_0" instantiated altera_merlin_multiplexer "rsp_mux"
+Info: Reusing file C:/Users/zc569/Desktop/Lab2_Week3_V1/Lab2_Week3_V1/Lab2_Week3/Lab2-week/VGA_to_M10k/VGA_to_M10k/VGA_to_M10k/verilog/Computer_System/synthesis/submodules/altera_merlin_arbitrator.sv
+Info: avalon_st_adapter: "mm_interconnect_0" instantiated altera_avalon_st_adapter "avalon_st_adapter"
+Error: border: Error during execution of script generate_hps_sdram.tcl: seq: Error during execution of "{C:/intelfpga_lite/23.1/quartus/../nios2eds/Nios II Command Shell.bat} make all 2>> stderr.txt": child process exited abnormally
+Error: border: Error during execution of script generate_hps_sdram.tcl: seq: Execution of command "{C:/intelfpga_lite/23.1/quartus/../nios2eds/Nios II Command Shell.bat} make all 2>> stderr.txt" failed
+Error: border: Error during execution of script generate_hps_sdram.tcl: seq: Nios II Command Shell.bat requires Windows Subsystem for Linux (WSL) to run.
+Error: border: Error during execution of script generate_hps_sdram.tcl: seq: Please install WSL and try again.
+Error: border: Error during execution of script generate_hps_sdram.tcl: seq: child process exited abnormally
+Error: border: Error during execution of script generate_hps_sdram.tcl: seq: add_fileset_file: No such file C:/Users/zc569/AppData/Local/Temp/alt0551_2657438739671011036.dir/0004_seq_gen/hps_AC_ROM.hex
+Error: border: Error during execution of script generate_hps_sdram.tcl: Generation stopped, 3 or more modules remaining
+Error: border: Execution of script generate_hps_sdram.tcl failed
+Error: border: 2026.04.07.20:11:29 Info:
+Error: border: ********************************************************************************************************************
+Error: border: 
+Error: border: Use qsys-generate for a simpler command-line interface for generating IP.
+Error: border: 
+Error: border: Run ip-generate with switch --remove-qsys-generate-warning to prevent this notice from appearing in subsequent runs.
+Error: border: 
+Error: border: ********************************************************************************************************************
+Error: border: 2026.04.07.20:11:30 Warning: Ignored parameter assignment device=5CSEMA5F31C6
+Error: border: 2026.04.07.20:11:30 Warning: Ignored parameter assignment extended_family_support=true
+Error: border: 2026.04.07.20:11:32 Warning: hps_sdram: 'Quick' simulation modes are NOT timing accurate. Some simulation memory models may issue warnings or errors
+Error: border: 2026.04.07.20:11:33 Warning: hps_sdram.seq: This module has no ports or interfaces
+Error: border: 2026.04.07.20:11:33 Warning: hps_sdram.p0: p0.scc must be exported, or connected to a matching conduit.
+Error: border: 2026.04.07.20:11:33 Warning: hps_sdram.as: as.afi_init_cal_req must be exported, or connected to a matching conduit.
+Error: border: 2026.04.07.20:11:33 Warning: hps_sdram.as: as.tracking must be exported, or connected to a matching conduit.
+Error: border: 2026.04.07.20:11:33 Warning: hps_sdram.c0: c0.status must be exported, or connected to a matching conduit.
+Error: border: 2026.04.07.20:11:33 Warning: hps_sdram.p0: p0.avl must be connected to an Avalon-MM master
+Error: border: 2026.04.07.20:11:33 Info: hps_sdram: Generating altera_mem_if_hps_emif "hps_sdram" for QUARTUS_SYNTH
+Error: border: 2026.04.07.20:11:33 Info: pll: "hps_sdram" instantiated altera_mem_if_hps_pll "pll"
+Error: border: 2026.04.07.20:11:33 Info: p0: Generating clock pair generator
+Error: border: 2026.04.07.20:11:34 Info: p0: Generating hps_sdram_p0_altdqdqs
+Error: border: 2026.04.07.20:11:37 Info: p0:
+Error: border: 2026.04.07.20:11:37 Info: p0: *****************************
+Error: border: 2026.04.07.20:11:37 Info: p0:
+Error: border: 2026.04.07.20:11:37 Info: p0: Remember to run the hps_sdram_p0_pin_assignments.tcl
+Error: border: 2026.04.07.20:11:37 Info: p0: script after running Synthesis and before Fitting.
+Error: border: 2026.04.07.20:11:37 Info: p0:
+Error: border: 2026.04.07.20:11:37 Info: p0: *****************************
+Error: border: 2026.04.07.20:11:37 Info: p0:
+Error: border: 2026.04.07.20:11:37 Info: p0: "hps_sdram" instantiated altera_mem_if_ddr3_hard_phy_core "p0"
+Error: border: 2026.04.07.20:11:37 Error: seq: Error during execution of "{C:/intelfpga_lite/23.1/quartus/../nios2eds/Nios II Command Shell.bat} make all 2>> stderr.txt": child process exited abnormally
+Error: border: 2026.04.07.20:11:37 Error: seq: Execution of command "{C:/intelfpga_lite/23.1/quartus/../nios2eds/Nios II Command Shell.bat} make all 2>> stderr.txt" failed
+Error: border: 2026.04.07.20:11:37 Error: seq: Nios II Command Shell.bat requires Windows Subsystem for Linux (WSL) to run.
+Error: border: 2026.04.07.20:11:37 Error: seq: Please install WSL and try again.
+Error: border: 2026.04.07.20:11:37 Error: seq: child process exited abnormally
+Error: border: 2026.04.07.20:11:37 Error: seq: add_fileset_file: No such file C:/Users/zc569/AppData/Local/Temp/alt0551_2657438739671011036.dir/0004_seq_gen/hps_AC_ROM.hex
+Error: border: while executing
+Error: border: "add_fileset_file $file_name [::alt_mem_if::util::hwtcl_utils::get_file_type $file_name 0] PATH $file_pathname"
+Error: border: ("foreach" body line 4)
+Error: border: invoked from within
+Error: border: "foreach file_pathname $return_files_sw {
+Error: border: 		_dprint 1 "Preparing to add $file_pathname"
+Error: border: 		set file_name [file tail $file_pathname]
+Error: border: 		add_fileset_file $..."
+Error: border: (procedure "generate_sw" line 18)
+Error: border: invoked from within
+Error: border: "generate_sw $name $fileset"
+Error: border: ("if" then script line 4)
+Error: border: invoked from within
+Error: border: "if {[string compare -nocase $fileset QUARTUS_SYNTH] == 0} {
+Error: border: 		set top_level_file "altera_mem_if_hhp_qseq_synth_top.v"
+Error: border: 		add_fileset_file $top_level_fi..."
+Error: border: (procedure "generate_files" line 4)
+Error: border: invoked from within
+Error: border: "generate_files $name QUARTUS_SYNTH"
+Error: border: (procedure "generate_synth" line 3)
+Error: border: invoked from within
+Error: border: "generate_synth altera_mem_if_hhp_qseq_synth_top"
+Error: border: 2026.04.07.20:11:37 Info: seq: "hps_sdram" instantiated altera_mem_if_hhp_ddr3_qseq "seq"
+Error: border: 2026.04.07.20:11:37 Error: Generation stopped, 3 or more modules remaining
+Error: border: 2026.04.07.20:11:37 Info: hps_sdram: Done "hps_sdram" with 7 modules, 33 files
+Info: border: "hps_io" instantiated altera_interface_generator "border"
+Error: Generation stopped, 1 or more modules remaining
+Info: Computer_System: Done "Computer_System" with 35 modules, 86 files
+Error: qsys-generate failed with exit code 1: 70 Errors, 10 Warnings
+Info: Finished: Create HDL design files for synthesis
