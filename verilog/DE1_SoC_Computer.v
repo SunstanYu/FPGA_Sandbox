@@ -300,54 +300,16 @@ assign ca_read_data = (active_buffer == 1'b0) ? ca_q_A : ca_q_B;
 //=======================================================
 // VGA Color Mapper
 //=======================================================
-// 火焰动态显示：
-// - MAT_FIRE 本体在红/橙之间闪烁
-// - 与火焰相邻(北/西邻格)的空格在背景黑与暗红之间循环，形成简单火苗边缘
-(* ramstyle = "MLAB, no_rw_check" *) reg [3:0] fire_row_north [0:319];
-reg [3:0] north_mat_r;
-always @(posedge M10k_pll) begin
-    north_mat_r <= fire_row_north[grid_read_x];
-    fire_row_north[grid_read_x] <= vga_data_out;
-end
-
-reg [8:0] fire_prev_gx;
-reg [8:0] fire_prev_gy;
-reg [3:0] fire_prev_mat;
-always @(posedge M10k_pll) begin
-    fire_prev_gx  <= grid_read_x;
-    fire_prev_gy  <= grid_read_y;
-    fire_prev_mat <= vga_data_out;
-end
-
-wire fire_same_row   = (grid_read_y == fire_prev_gy);
-wire west_is_fire    = fire_same_row && (grid_read_x > 9'd0) &&
-                       (grid_read_x == fire_prev_gx + 9'd1) && (fire_prev_mat == MAT_FIRE);
-wire north_is_fire   = (north_mat_r == MAT_FIRE);
-wire fire_neighbor   = north_is_fire || west_is_fire;
-reg [23:0] fire_pulse_ctr;
-always @(posedge M10k_pll or negedge sys_reset_n) begin
-    if (!sys_reset_n)
-        fire_pulse_ctr <= 24'd0;
-    else
-        fire_pulse_ctr <= fire_pulse_ctr + 24'd1;
-end
-
-wire [15:0] fire_phase = hw_cycle_count[19:4] ^ hw_cycle_count[31:20] ^
-                         {grid_read_x[7:0], grid_read_y[7:0]} ^ fire_pulse_ctr[23:8];
-wire fire_core_hot   = fire_phase[0];
-wire fire_glow_tick  = fire_phase[1] ^ fire_phase[6];
-
+// 火焰/烟雾：静态纯色（与沙/水共用同一网格单元；笔刷方块大小见 hps_control.c 的 BRUSH_SIZE）
 reg [7:0] final_vga_color;
 always @(*) begin
     case(vga_data_out)
-        MAT_EMPTY: final_vga_color = fire_neighbor ?
-                                     (fire_glow_tick ? 8'b000_000_00 : 8'b100_000_00) :
-                                     8'b000_000_00; // Black
+        MAT_EMPTY: final_vga_color = 8'b000_000_00; // Black
         MAT_SAND:  final_vga_color = 8'b111_110_00; // Yellow
         MAT_WATER: final_vga_color = 8'b000_010_11; // Blue
         MAT_WALL:  final_vga_color = 8'b011_011_01; // Gray
-        MAT_FIRE:  final_vga_color = fire_core_hot ? 8'b111_010_00 : 8'b101_000_00;
-        MAT_SMOKE: final_vga_color = fire_glow_tick ? 8'b100_100_10 : 8'b010_010_01;
+        MAT_FIRE:  final_vga_color = 8'b111_000_00; // Red (static)
+        MAT_SMOKE: final_vga_color = 8'b100_100_10; // Gray (static)
         default:   final_vga_color = 8'b000_000_00;
     endcase
 end
