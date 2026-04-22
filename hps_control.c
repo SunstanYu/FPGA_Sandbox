@@ -70,7 +70,11 @@ void paint_to_fpga(int cx, int cy, int material)
 				*(brush_x_ptr)   = (unsigned int)x;
 				*(brush_y_ptr)   = (unsigned int)y;
 				*(brush_mat_ptr) = (unsigned int)material;
+				/* 读回 barrier：确保 brush_mat 的写已到达 Avalon 桥
+				   然后才发出 brush_we 脉冲 */
+				(void)*(brush_mat_ptr);
 				*(brush_we_ptr)  = 1;
+				(void)*(brush_we_ptr);
 				*(brush_we_ptr)  = 0;
 			}
 		}
@@ -145,7 +149,9 @@ int main(void)
 							*(brush_x_ptr)   = (unsigned int)cx;
 							*(brush_y_ptr)   = (unsigned int)cy;
 							*(brush_mat_ptr) = (unsigned int)MAT_EMPTY;
+							(void)*(brush_mat_ptr);
 							*(brush_we_ptr)  = 1;
+							(void)*(brush_we_ptr);
 							*(brush_we_ptr)  = 0;
 						}
 					}
