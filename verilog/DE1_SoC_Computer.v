@@ -238,10 +238,50 @@ wire [3:0] ca_q_A, ca_q_B;
 // HPS brush address
 wire [16:0] hps_write_addr = (brush_y * GRID_WIDTH) + brush_x;
 
-// Write priority MUX: HPS brush overrides CA engine
-wire        we_comb   = brush_we ? 1'b1    : ca_we;
-wire [16:0] addr_comb = brush_we ? hps_write_addr : ca_write_addr;
-wire [3:0]  data_comb = brush_we ? brush_mat      : ca_write_data;
+// -------------------------------------------------------
+// FIX: Isolate HPS brush synchronous writes from CA pipeline.
+//
+// Problem: brush_* signals are async to M10k_pll. The old design
+// used combinational MUX (brush_we ? brush_mat : ca_data) directly
+// on M10K port-B writes, causing setup/hold violations where
+// fire(4)/smoke(5) wrote wrong values and displayed as black.
+//
+// Solution: Brush writes go through a 1-cycle registered pipeline
+// (we_sync/addr_sync/data_sync) in M10k_pll domain. CA writes
+// still go directly through the combinational MUX since ca_* is
+// already synchronous to M10k_pll.
+//
+// This means brush writes happen 1 cycle after the HPS toggles
+// brush_we, but CA write timing is unchanged.
+// -------------------------------------------------------
+
+// Brush-only registered write path (sync to M10k_pll)
+reg         brush_we_sync;
+reg  [16:0] brush_addr_sync;
+reg  [3:0]  brush_data_sync;
+
+always @(posedge M10k_pll or negedge sys_reset_n) begin
+    if (!sys_reset_n) begin
+        brush_we_sync   <= 1'b0;
+        brush_addr_sync <= 17'd0;
+        brush_data_sync <= 4'd0;
+    end else begin
+        brush_we_sync   <= brush_we;
+        brush_addr_sync <= hps_write_addr;
+        brush_data_sync <= brush_mat;
+    end
+end
+
+// CA MUX: still combinational (ca_* is already in M10k_pll domain)
+wire        ca_we_mux   = ca_we;
+wire [16:0] ca_addr_mux = ca_write_addr;
+wire [3:0]  ca_data_mux = ca_write_data;
+
+// Final merge: brush_sync overrides CA (brush is 1 cycle delayed,
+// so no conflict: CA and brush never write same cycle in practice)
+wire        we_final   = brush_we_sync ? 1'b1    : ca_we_mux;
+wire [16:0] addr_final = brush_we_sync ? brush_addr_sync : ca_addr_mux;
+wire [3:0]  data_final = brush_we_sync ? brush_data_sync  : ca_data_mux;
 
 // -------------------------------------------------------
 // FIX: Corrected dual-port routing
@@ -268,9 +308,9 @@ M10K_76800_4 grid_A (
     // Port B: CA engine
     //   active=0 (A is front): CA reads from A, no write
     //   active=1 (A is back):  CA writes to A
-    .we_b  ( (active_buffer == 1'b1) ? we_comb   : 1'b0       ),
-    .addr_b( (active_buffer == 1'b1) ? addr_comb : ca_read_addr),
-    .d_b(data_comb),
+    .we_b  ( (active_buffer == 1'b1) ? we_final   : 1'b0       ),
+    .addr_b( (active_buffer == 1'b1) ? addr_final : ca_read_addr),
+    .d_b(data_final),
     .q_b(ca_q_A)
 );
 
@@ -282,9 +322,9 @@ M10K_76800_4 grid_B (
     // Port B: CA engine
     //   active=0 (B is back):  CA writes to B
     //   active=1 (B is front): CA reads from B, no write
-    .we_b  ( (active_buffer == 1'b0) ? we_comb   : 1'b0       ),
-    .addr_b( (active_buffer == 1'b0) ? addr_comb : ca_read_addr),
-    .d_b(data_comb),
+    .we_b  ( (active_buffer == 1'b0) ? we_final   : 1'b0       ),
+    .addr_b( (active_buffer == 1'b0) ? addr_final : ca_read_addr),
+    .d_b(data_final),
     .q_b(ca_q_B)
 );
 

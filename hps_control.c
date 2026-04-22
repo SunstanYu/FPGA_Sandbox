@@ -111,6 +111,7 @@ int main(void)
 	int mx = 320;
 	int my = 240;
 	int current_mat_idx = MAT_WALL;
+	int prev_left = 0;
 	int prev_right = 0;
 	int prev_middle = 0;
 
@@ -182,20 +183,25 @@ int main(void)
 					int grid_x = mx / 2;
 					int grid_y = my / 2;
 					if (grid_y >= CANVAS_H) {
-						int slot = grid_x / (320 / 5);
-						if (slot < 0) slot = 0;
-						if (slot > 4) slot = 4;
-						int newm = toolbar_slot_mat[slot];
-						if (newm != current_mat_idx) {
-							current_mat_idx = newm;
-							fpga_set_brush_material((unsigned int)current_mat_idx);
-							printf(">>> TOOLBAR: [%s] <<<\n",
-								material_names[current_mat_idx]);
+						/* 边沿触发：只在刚进入底栏时切换一次，
+						   防止拖动过程中反复切换材质 */
+						if (!prev_left) {
+							int slot = grid_x / (320 / 5);
+							if (slot < 0) slot = 0;
+							if (slot > 4) slot = 4;
+							int newm = toolbar_slot_mat[slot];
+							if (newm != current_mat_idx) {
+								current_mat_idx = newm;
+								fpga_set_brush_material((unsigned int)current_mat_idx);
+								printf(">>> TOOLBAR: [%s] <<<\n",
+									material_names[current_mat_idx]);
+							}
 						}
 					} else {
 						paint_to_fpga(grid_x, grid_y, current_mat_idx);
 					}
 				}
+				prev_left = left;
 			}
 		}
 		usleep(1000);
