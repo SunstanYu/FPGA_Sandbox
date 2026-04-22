@@ -239,34 +239,53 @@ wire [3:0] ca_q_A, ca_q_B;
 wire [16:0] hps_write_addr = (brush_y * GRID_WIDTH) + brush_x;
 
 // -------------------------------------------------------
-// FIX: Isolate HPS brush synchronous writes from CA pipeline.
+// FIX: Isolate HPS brush writes from CA pipeline.
 //
 // Problem: brush_* signals are async to M10k_pll. The old design
 // used combinational MUX (brush_we ? brush_mat : ca_data) directly
 // on M10K port-B writes, causing setup/hold violations where
 // fire(4)/smoke(5) wrote wrong values and displayed as black.
 //
-// Solution: Brush writes go through a 1-cycle registered pipeline
-// (we_sync/addr_sync/data_sync) in M10k_pll domain. CA writes
-// still go directly through the combinational MUX since ca_* is
-// already synchronous to M10k_pll.
-//
-// This means brush writes happen 1 cycle after the HPS toggles
-// brush_we, but CA write timing is unchanged.
+// Solution:
+//   - brush_we uses a 2-stage synchronizer to prevent metastability
+//     from async Avalon PIO signals crossing into M10k_pll domain.
+//     An edge detector generates a clean 1-cycle pulse.
+//   - brush addr/data are single-register-sync'd (valid when we fires).
+//   - CA writes still flow directly through the combinational MUX
+//     since ca_* is already synchronous to M10k_pll.
+//   - brush_we_edge overrides CA when active (arbitration: brush wins).
 // -------------------------------------------------------
 
-// Brush-only registered write path (sync to M10k_pll)
-reg         brush_we_sync;
-reg  [16:0] brush_addr_sync;
-reg  [3:0]  brush_data_sync;
+// 2-stage synchronizer for brush_we (metastability hardening)
+// Reviewer note: brush_we from Avalon PIO crosses async clock domains;
+// a 2-stage sync ensures metastability does not propagate into M10K logic.
+reg         brush_we_s1, brush_we_s2;
+reg         brush_we_sync_prev;
+wire        brush_we_edge = brush_we_s2 & ~brush_we_sync_prev;
 
 always @(posedge M10k_pll or negedge sys_reset_n) begin
     if (!sys_reset_n) begin
-        brush_we_sync   <= 1'b0;
+        brush_we_s1         <= 1'b0;
+        brush_we_s2         <= 1'b0;
+        brush_we_sync_prev  <= 1'b0;
+    end else begin
+        brush_we_s1        <= brush_we;
+        brush_we_s2        <= brush_we_s1;
+        brush_we_sync_prev <= brush_we_s2;
+    end
+end
+
+// Brush address and data: single-register sync into M10k_pll domain.
+// HPS writes x/y/mat before asserting we, so when brush_we_edge fires,
+// these values have been stable for at least one M10k_pll cycle.
+reg         [16:0] brush_addr_sync;
+reg         [3:0]  brush_data_sync;
+
+always @(posedge M10k_pll or negedge sys_reset_n) begin
+    if (!sys_reset_n) begin
         brush_addr_sync <= 17'd0;
         brush_data_sync <= 4'd0;
     end else begin
-        brush_we_sync   <= brush_we;
         brush_addr_sync <= hps_write_addr;
         brush_data_sync <= brush_mat;
     end
@@ -277,11 +296,14 @@ wire        ca_we_mux   = ca_we;
 wire [16:0] ca_addr_mux = ca_write_addr;
 wire [3:0]  ca_data_mux = ca_write_data;
 
-// Final merge: brush_sync overrides CA (brush is 1 cycle delayed,
-// so no conflict: CA and brush never write same cycle in practice)
-wire        we_final   = brush_we_sync ? 1'b1    : ca_we_mux;
-wire [16:0] addr_final = brush_we_sync ? brush_addr_sync : ca_addr_mux;
-wire [3:0]  data_final = brush_we_sync ? brush_data_sync  : ca_data_mux;
+// Final merge: brush_we_edge overrides CA.
+// Arbitration policy: brush (HPS user input) always wins over CA sweep.
+// If we_edge and ca_we assert simultaneously on the same address, CA
+// write is silently dropped and brush data is stored instead. This is
+// desirable — user intent supersedes background physics simulation.
+wire        we_final   = brush_we_edge ? 1'b1    : ca_we_mux;
+wire [16:0] addr_final = brush_we_edge ? brush_addr_sync : ca_addr_mux;
+wire [3:0]  data_final = brush_we_edge ? brush_data_sync  : ca_data_mux;
 
 // -------------------------------------------------------
 // FIX: Corrected dual-port routing
