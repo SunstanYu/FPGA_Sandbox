@@ -362,8 +362,7 @@ assign ca_read_data = (active_buffer == 1'b0) ? ca_q_A : ca_q_B;
 //=======================================================
 // VGA Color Mapper
 //=======================================================
-// Smoke: global tick (display-only). Fire: per-cell phase (Minecraft-style) so a row
-// of fire blocks does not all flicker in sync.
+// Fire and smoke animation is display-only; physics still stores only MAT_*.
 reg [19:0] visual_anim_div;
 reg [3:0]  visual_anim_ctr;
 always @(posedge M10k_pll or negedge sys_reset_n) begin
@@ -377,24 +376,6 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
     end
 end
 
-// Per-grid-cell fire flicker: mix time with (x,y) so adjacent flames are uncorrelated
-// (not one global blink). Timer PIO + local counter both contribute so animation works
-// even if hw_cycle_count is static.
-reg [23:0] fire_anim_tick;
-always @(posedge M10k_pll or negedge sys_reset_n) begin
-    if (!sys_reset_n)
-        fire_anim_tick <= 24'd0;
-    else
-        fire_anim_tick <= fire_anim_tick + 24'd1;
-end
-wire [15:0] fire_phase = hw_cycle_count[25:10]
-                        ^ fire_anim_tick[23:8]
-                        ^ {grid_read_x[7:0], grid_read_y[7:0]}
-                        ^ {grid_read_y[5:0], grid_read_x[5:0]}
-                        ^ (grid_read_x * 9'd17)
-                        ^ (grid_read_y * 9'd31);
-wire        fire_mc_hot  = fire_phase[0] ^ fire_phase[3] ^ fire_phase[7] ^ fire_phase[12];
-
 reg [7:0] final_vga_color;
 always @(*) begin
     case(vga_data_out)
@@ -402,8 +383,8 @@ always @(*) begin
         MAT_SAND:  final_vga_color = 8'b111_110_00; // Yellow
         MAT_WATER: final_vga_color = 8'b000_010_11; // Blue
         MAT_WALL:  final_vga_color = 8'b011_011_01; // Gray
-        MAT_FIRE:  final_vga_color = fire_mc_hot ? 8'b111_010_00 : 8'b101_000_00; // orange / ember
-        MAT_SMOKE: final_vga_color = visual_anim_ctr[2] ? 8'b100_100_10 : 8'b011_011_01;
+        MAT_FIRE:  final_vga_color = visual_anim_ctr[1] ? 8'b111_010_01 : 8'b111_000_00;
+        MAT_SMOKE: final_vga_color = visual_anim_ctr[2] ? 8'b110_110_11 : 8'b100_100_10;
         default:   final_vga_color = 8'b000_000_00;
     endcase
 end
@@ -464,13 +445,22 @@ localparam S_IDLE              = 5'd0,
            S_CHK_SIDE2_WT      = 5'd13,  // water: wait for second side read
            S_CHK_SIDE2_EV      = 5'd14,  // water: evaluate second side
            S_NEXT_PIXEL        = 5'd15,
-           // Fire: no extra states — static in place in S_SWEEP_EVAL (Minecraft-style).
-           S_CHK_SMK_UP_WT     = 5'd16,
-           S_CHK_SMK_UP_EV     = 5'd17,
-           S_CHK_SMK_DIAG1_WT  = 5'd18,
-           S_CHK_SMK_DIAG1_EV  = 5'd19,
-           S_CHK_SMK_DIAG2_WT  = 5'd20,
-           S_CHK_SMK_DIAG2_EV  = 5'd21;
+           S_CHK_FIRE_BOT_WT   = 5'd16,
+           S_CHK_FIRE_BOT_EV   = 5'd17,
+           S_CHK_FIRE_DIAG1_WT = 5'd18,
+           S_CHK_FIRE_DIAG1_EV = 5'd19,
+           S_CHK_FIRE_DIAG2_WT = 5'd20,
+           S_CHK_FIRE_DIAG2_EV = 5'd21,
+           S_CHK_FIRE_SIDE1_WT = 5'd22,
+           S_CHK_FIRE_SIDE1_EV = 5'd23,
+           S_CHK_FIRE_SIDE2_WT = 5'd24,
+           S_CHK_FIRE_SIDE2_EV = 5'd25,
+           S_CHK_SMK_UP_WT     = 5'd26,
+           S_CHK_SMK_UP_EV     = 5'd27,
+           S_CHK_SMK_DIAG1_WT  = 5'd28,
+           S_CHK_SMK_DIAG1_EV  = 5'd29,
+           S_CHK_SMK_DIAG2_WT  = 5'd30,
+           S_CHK_SMK_DIAG2_EV  = 5'd31;
 
 reg [4:0]  state;
 reg [16:0] clear_addr;
@@ -570,16 +560,25 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end
 
                     MAT_FIRE: begin
-                        // Fire does not flow or stack: stay in place (flicker is VGA-only).
-                        ca_we         <= 1'b1;
-                        ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                        ca_write_data <= MAT_FIRE;
-                        state         <= S_NEXT_PIXEL;
+                        if (cy == GRID_HEIGHT - 10'd1) begin
+                            // Bottom row flames do not pile up like sand; they flicker out.
+                            if (random_bit) begin
+                                ca_we         <= 1'b1;
+                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                ca_write_data <= MAT_FIRE;
+                            end
+                            state <= S_NEXT_PIXEL;
+                        end else begin
+                            // Fire falls through air/smoke, is extinguished by water,
+                            // and otherwise burns in place above solid fuel.
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
+                            state        <= S_CHK_FIRE_BOT_WT;
+                        end
                     end
 
                     MAT_SMOKE: begin
-                        if (cy == 10'd0 || lfsr[4:0] == 5'b00000) begin
-                            // Top edge or random decay: disappear.
+                        if (cy == 10'd0 || lfsr[6:0] == 7'b0000000) begin
+                            // Top edge or random decay (~1/128 per frame, ~2s lifetime at 60fps): disappear.
                             state <= S_NEXT_PIXEL;
                         end else begin
                             ca_read_addr <= ((cy - 10'd1) * GRID_WIDTH) + cx;
@@ -890,6 +889,125 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                         state <= S_NEXT_PIXEL;
                     end
                 end
+            end
+
+            // ----------------------------------------------------------
+            // Fire physics: fall through air/smoke, extinguish on water,
+            // and burn in place above sand/wall instead of piling up.
+            // ----------------------------------------------------------
+            S_CHK_FIRE_BOT_WT: begin
+                state <= S_CHK_FIRE_BOT_EV;
+            end
+
+            S_CHK_FIRE_BOT_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_FIRE;
+                    state         <= S_NEXT_PIXEL;
+                end else if (ca_read_data == MAT_WATER) begin
+                    // Water below extinguishes this flame.
+                    state <= S_NEXT_PIXEL;
+                end else begin
+                    // Solid materials below support the flame. Sand/water/wall brush
+                    // writes and moving sand/water may still overwrite this cell.
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_FIRE;
+                    state         <= S_NEXT_PIXEL;
+                end
+            end
+
+            S_CHK_FIRE_DIAG1_WT: begin
+                state <= S_CHK_FIRE_DIAG1_EV;
+            end
+
+            S_CHK_FIRE_DIAG1_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                    ? ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1)
+                                    : ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                    ca_write_data <= MAT_FIRE;
+                    state         <= S_NEXT_PIXEL;
+                end else begin
+                    if (diag_side == 1'b0) begin
+                        if (cx == GRID_WIDTH - 10'd1) begin
+                            state <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                            state        <= S_CHK_FIRE_DIAG2_WT;
+                        end
+                    end else begin
+                        if (cx == 10'd0) begin
+                            state <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                            state        <= S_CHK_FIRE_DIAG2_WT;
+                        end
+                    end
+                end
+            end
+
+            S_CHK_FIRE_DIAG2_WT: begin
+                state <= S_CHK_FIRE_DIAG2_EV;
+            end
+
+            S_CHK_FIRE_DIAG2_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                    ? ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1)
+                                    : ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                    ca_write_data <= MAT_FIRE;
+                end
+                state <= S_NEXT_PIXEL;
+            end
+
+            S_CHK_FIRE_SIDE1_WT: begin
+                state <= S_CHK_FIRE_SIDE1_EV;
+            end
+
+            S_CHK_FIRE_SIDE1_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                    ? (cy * GRID_WIDTH) + (cx - 10'd1)
+                                    : (cy * GRID_WIDTH) + (cx + 10'd1);
+                    ca_write_data <= MAT_FIRE;
+                    state         <= S_NEXT_PIXEL;
+                end else begin
+                    if (diag_side == 1'b0) begin
+                        if (cx == GRID_WIDTH - 10'd1) begin
+                            state <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                            state        <= S_CHK_FIRE_SIDE2_WT;
+                        end
+                    end else begin
+                        if (cx == 10'd0) begin
+                            state <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                            state        <= S_CHK_FIRE_SIDE2_WT;
+                        end
+                    end
+                end
+            end
+
+            S_CHK_FIRE_SIDE2_WT: begin
+                state <= S_CHK_FIRE_SIDE2_EV;
+            end
+
+            S_CHK_FIRE_SIDE2_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                    ? (cy * GRID_WIDTH) + (cx + 10'd1)
+                                    : (cy * GRID_WIDTH) + (cx - 10'd1);
+                    ca_write_data <= MAT_FIRE;
+                end
+                state <= S_NEXT_PIXEL;
             end
 
             // ----------------------------------------------------------
