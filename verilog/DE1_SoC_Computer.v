@@ -362,7 +362,20 @@ assign ca_read_data = (active_buffer == 1'b0) ? ca_q_A : ca_q_B;
 //=======================================================
 // VGA Color Mapper
 //=======================================================
-// 火焰/烟雾：静态纯色（与沙/水共用同一网格单元；笔刷方块大小见 hps_control.c 的 BRUSH_SIZE）
+// Fire and smoke animation is display-only; physics still stores only MAT_*.
+reg [19:0] visual_anim_div;
+reg [3:0]  visual_anim_ctr;
+always @(posedge M10k_pll or negedge sys_reset_n) begin
+    if (!sys_reset_n) begin
+        visual_anim_div <= 20'd0;
+        visual_anim_ctr <= 4'd0;
+    end else begin
+        visual_anim_div <= visual_anim_div + 20'd1;
+        if (visual_anim_div == 20'd0)
+            visual_anim_ctr <= visual_anim_ctr + 4'd1;
+    end
+end
+
 reg [7:0] final_vga_color;
 always @(*) begin
     case(vga_data_out)
@@ -370,8 +383,8 @@ always @(*) begin
         MAT_SAND:  final_vga_color = 8'b111_110_00; // Yellow
         MAT_WATER: final_vga_color = 8'b000_010_11; // Blue
         MAT_WALL:  final_vga_color = 8'b011_011_01; // Gray
-        MAT_FIRE:  final_vga_color = 8'b111_000_00; // Red (static)
-        MAT_SMOKE: final_vga_color = 8'b100_100_10; // Gray (static)
+        MAT_FIRE:  final_vga_color = visual_anim_ctr[1] ? 8'b111_010_00 : 8'b111_000_00;
+        MAT_SMOKE: final_vga_color = visual_anim_ctr[2] ? 8'b100_100_10 : 8'b011_011_01;
         default:   final_vga_color = 8'b000_000_00;
     endcase
 end
@@ -415,25 +428,41 @@ end
 //   - If blocked below, spread left or right using random_bit.
 //=======================================================
 
-// FIX: Extended state encoding to cover sand diagonals + water spread
-localparam S_IDLE         = 4'd0,
-           S_CLEAR        = 4'd1,
-           S_SWEEP_READ   = 4'd2,
-           S_SWEEP_WAIT   = 4'd3,
-           S_SWEEP_EVAL   = 4'd4,
-           S_CHK_BOT_WT   = 4'd5,   // wait 1 cycle after issuing read of (x, y+1)
-           S_CHK_BOT_EV   = 4'd6,   // evaluate (x, y+1) result
-           S_CHK_DIAG1_WT = 4'd7,   // sand: wait for first diagonal read
-           S_CHK_DIAG1_EV = 4'd8,   // sand: evaluate first diagonal
-           S_CHK_DIAG2_WT = 4'd9,   // sand: wait for second diagonal read
-           S_CHK_DIAG2_EV = 4'd10,  // sand: evaluate second diagonal
-           S_CHK_SIDE1_WT = 4'd11,  // water: wait for first side read
-           S_CHK_SIDE1_EV = 4'd12,  // water: evaluate first side
-           S_CHK_SIDE2_WT = 4'd13,  // water: wait for second side read
-           S_CHK_SIDE2_EV = 4'd14,  // water: evaluate second side
-           S_NEXT_PIXEL   = 4'd15;
+// FIX: Extended state encoding to cover sand, water, fire, and smoke motion.
+localparam S_IDLE              = 5'd0,
+           S_CLEAR             = 5'd1,
+           S_SWEEP_READ        = 5'd2,
+           S_SWEEP_WAIT        = 5'd3,
+           S_SWEEP_EVAL        = 5'd4,
+           S_CHK_BOT_WT        = 5'd5,   // wait 1 cycle after issuing read of (x, y+1)
+           S_CHK_BOT_EV        = 5'd6,   // evaluate (x, y+1) result
+           S_CHK_DIAG1_WT      = 5'd7,   // sand: wait for first diagonal read
+           S_CHK_DIAG1_EV      = 5'd8,   // sand: evaluate first diagonal
+           S_CHK_DIAG2_WT      = 5'd9,   // sand: wait for second diagonal read
+           S_CHK_DIAG2_EV      = 5'd10,  // sand: evaluate second diagonal
+           S_CHK_SIDE1_WT      = 5'd11,  // water: wait for first side read
+           S_CHK_SIDE1_EV      = 5'd12,  // water: evaluate first side
+           S_CHK_SIDE2_WT      = 5'd13,  // water: wait for second side read
+           S_CHK_SIDE2_EV      = 5'd14,  // water: evaluate second side
+           S_NEXT_PIXEL        = 5'd15,
+           S_CHK_FIRE_BOT_WT   = 5'd16,
+           S_CHK_FIRE_BOT_EV   = 5'd17,
+           S_CHK_FIRE_DIAG1_WT = 5'd18,
+           S_CHK_FIRE_DIAG1_EV = 5'd19,
+           S_CHK_FIRE_DIAG2_WT = 5'd20,
+           S_CHK_FIRE_DIAG2_EV = 5'd21,
+           S_CHK_FIRE_SIDE1_WT = 5'd22,
+           S_CHK_FIRE_SIDE1_EV = 5'd23,
+           S_CHK_FIRE_SIDE2_WT = 5'd24,
+           S_CHK_FIRE_SIDE2_EV = 5'd25,
+           S_CHK_SMK_UP_WT     = 5'd26,
+           S_CHK_SMK_UP_EV     = 5'd27,
+           S_CHK_SMK_DIAG1_WT  = 5'd28,
+           S_CHK_SMK_DIAG1_EV  = 5'd29,
+           S_CHK_SMK_DIAG2_WT  = 5'd30,
+           S_CHK_SMK_DIAG2_EV  = 5'd31;
 
-reg [3:0]  state;
+reg [4:0]  state;
 reg [16:0] clear_addr;
 reg [9:0]  cx;
 reg [9:0]  cy;
@@ -531,19 +560,47 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end
 
                     MAT_FIRE: begin
-                        // Fire is static for now: keep cell in place.
-                        ca_we         <= 1'b1;
-                        ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                        ca_write_data <= MAT_FIRE;
-                        state         <= S_NEXT_PIXEL;
+                        if (cy == GRID_HEIGHT - 10'd1) begin
+                            // Bottom row: try horizontal spread so fire does not pile up.
+                            if (diag_side == 1'b0) begin
+                                if (cx == 10'd0) begin
+                                    if (cx == GRID_WIDTH - 10'd1) begin
+                                        state <= S_NEXT_PIXEL;
+                                    end else begin
+                                        ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                                        state        <= S_CHK_FIRE_SIDE2_WT;
+                                    end
+                                end else begin
+                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                                    state        <= S_CHK_FIRE_SIDE1_WT;
+                                end
+                            end else begin
+                                if (cx == GRID_WIDTH - 10'd1) begin
+                                    if (cx == 10'd0) begin
+                                        state <= S_NEXT_PIXEL;
+                                    end else begin
+                                        ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                                        state        <= S_CHK_FIRE_SIDE2_WT;
+                                    end
+                                end else begin
+                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                                    state        <= S_CHK_FIRE_SIDE1_WT;
+                                end
+                            end
+                        end else begin
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
+                            state        <= S_CHK_FIRE_BOT_WT;
+                        end
                     end
 
                     MAT_SMOKE: begin
-                        // Smoke is static for now: keep cell in place.
-                        ca_we         <= 1'b1;
-                        ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                        ca_write_data <= MAT_SMOKE;
-                        state         <= S_NEXT_PIXEL;
+                        if (cy == 10'd0 || lfsr[4:0] == 5'b00000) begin
+                            // Top edge or random decay: disappear.
+                            state <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= ((cy - 10'd1) * GRID_WIDTH) + cx;
+                            state        <= S_CHK_SMK_UP_WT;
+                        end
                     end
 
                     MAT_SAND: begin
@@ -592,7 +649,9 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             S_CHK_BOT_EV: begin
-                if (ca_read_data == MAT_EMPTY) begin
+                if (ca_read_data == MAT_EMPTY ||
+                    ca_read_data == MAT_SMOKE ||
+                    ca_read_data == MAT_FIRE) begin
                     // Cell below is free — fall straight down.
                     ca_we         <= 1'b1;
                     ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
@@ -688,7 +747,9 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             S_CHK_DIAG1_EV: begin
-                if (ca_read_data == MAT_EMPTY) begin
+                if (ca_read_data == MAT_EMPTY ||
+                    ca_read_data == MAT_SMOKE ||
+                    ca_read_data == MAT_FIRE) begin
                     // First diagonal is free — slide there.
                     if (diag_side == 1'b0)
                         ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
@@ -735,7 +796,9 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             S_CHK_DIAG2_EV: begin
-                if (ca_read_data == MAT_EMPTY) begin
+                if (ca_read_data == MAT_EMPTY ||
+                    ca_read_data == MAT_SMOKE ||
+                    ca_read_data == MAT_FIRE) begin
                     // Fallback diagonal is free.
                     if (diag_side == 1'b0)
                         ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
@@ -778,7 +841,9 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             S_CHK_SIDE1_EV: begin
-                if (ca_read_data == MAT_EMPTY) begin
+                if (ca_read_data == MAT_EMPTY ||
+                    ca_read_data == MAT_SMOKE ||
+                    ca_read_data == MAT_FIRE) begin
                     // 优先侧为空：撤销自身，记录目标，下一拍写邻居
                     ca_we             <= 1'b1;
                     ca_write_addr     <= (cy * GRID_WIDTH) + cx;
@@ -824,7 +889,9 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     state         <= S_NEXT_PIXEL;
                 end else begin
                     // 读另一侧（备选侧）的前台结果
-                    if (ca_read_data == MAT_EMPTY) begin
+                    if (ca_read_data == MAT_EMPTY ||
+                        ca_read_data == MAT_SMOKE ||
+                        ca_read_data == MAT_FIRE) begin
                         // 备选侧为空：撤销自身，记录目标，下一拍写邻居
                         ca_we             <= 1'b1;
                         ca_write_addr     <= (cy * GRID_WIDTH) + cx;
@@ -839,6 +906,270 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                         state <= S_NEXT_PIXEL;
                     end
                 end
+            end
+
+            // ----------------------------------------------------------
+            // Fire physics: fall through air/smoke, extinguish on water,
+            // and lick diagonally or sideways when blocked by fuel/edges.
+            // ----------------------------------------------------------
+            S_CHK_FIRE_BOT_WT: begin
+                state <= S_CHK_FIRE_BOT_EV;
+            end
+
+            S_CHK_FIRE_BOT_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_FIRE;
+                    state         <= S_NEXT_PIXEL;
+                end else if (ca_read_data == MAT_WATER) begin
+                    // Water below extinguishes this flame.
+                    state <= S_NEXT_PIXEL;
+                end else if (ca_read_data == MAT_SAND || ca_read_data == MAT_WALL) begin
+                    if (diag_side == 1'b0) begin
+                        if (cx == 10'd0) begin
+                            if (cx == GRID_WIDTH - 10'd1) begin
+                                ca_we         <= 1'b1;
+                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                ca_write_data <= MAT_FIRE;
+                                state         <= S_NEXT_PIXEL;
+                            end else begin
+                                ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                                state        <= S_CHK_FIRE_DIAG2_WT;
+                            end
+                        end else begin
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                            state        <= S_CHK_FIRE_DIAG1_WT;
+                        end
+                    end else begin
+                        if (cx == GRID_WIDTH - 10'd1) begin
+                            if (cx == 10'd0) begin
+                                ca_we         <= 1'b1;
+                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                ca_write_data <= MAT_FIRE;
+                                state         <= S_NEXT_PIXEL;
+                            end else begin
+                                ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                                state        <= S_CHK_FIRE_DIAG2_WT;
+                            end
+                        end else begin
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                            state        <= S_CHK_FIRE_DIAG1_WT;
+                        end
+                    end
+                end else begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_FIRE;
+                    state         <= S_NEXT_PIXEL;
+                end
+            end
+
+            S_CHK_FIRE_DIAG1_WT: begin
+                state <= S_CHK_FIRE_DIAG1_EV;
+            end
+
+            S_CHK_FIRE_DIAG1_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                    ? ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1)
+                                    : ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                    ca_write_data <= MAT_FIRE;
+                    state         <= S_NEXT_PIXEL;
+                end else begin
+                    if (diag_side == 1'b0) begin
+                        if (cx == GRID_WIDTH - 10'd1) begin
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_FIRE;
+                            state         <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                            state        <= S_CHK_FIRE_DIAG2_WT;
+                        end
+                    end else begin
+                        if (cx == 10'd0) begin
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_FIRE;
+                            state         <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                            state        <= S_CHK_FIRE_DIAG2_WT;
+                        end
+                    end
+                end
+            end
+
+            S_CHK_FIRE_DIAG2_WT: begin
+                state <= S_CHK_FIRE_DIAG2_EV;
+            end
+
+            S_CHK_FIRE_DIAG2_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                    ? ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1)
+                                    : ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                    ca_write_data <= MAT_FIRE;
+                end else begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_FIRE;
+                end
+                state <= S_NEXT_PIXEL;
+            end
+
+            S_CHK_FIRE_SIDE1_WT: begin
+                state <= S_CHK_FIRE_SIDE1_EV;
+            end
+
+            S_CHK_FIRE_SIDE1_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                    ? (cy * GRID_WIDTH) + (cx - 10'd1)
+                                    : (cy * GRID_WIDTH) + (cx + 10'd1);
+                    ca_write_data <= MAT_FIRE;
+                    state         <= S_NEXT_PIXEL;
+                end else begin
+                    if (diag_side == 1'b0) begin
+                        if (cx == GRID_WIDTH - 10'd1) begin
+                            state <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                            state        <= S_CHK_FIRE_SIDE2_WT;
+                        end
+                    end else begin
+                        if (cx == 10'd0) begin
+                            state <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                            state        <= S_CHK_FIRE_SIDE2_WT;
+                        end
+                    end
+                end
+            end
+
+            S_CHK_FIRE_SIDE2_WT: begin
+                state <= S_CHK_FIRE_SIDE2_EV;
+            end
+
+            S_CHK_FIRE_SIDE2_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                    ? (cy * GRID_WIDTH) + (cx + 10'd1)
+                                    : (cy * GRID_WIDTH) + (cx - 10'd1);
+                    ca_write_data <= MAT_FIRE;
+                end
+                state <= S_NEXT_PIXEL;
+            end
+
+            // ----------------------------------------------------------
+            // Smoke physics: drift upward, spread diagonally when blocked,
+            // and randomly decay to approximate finite lifetime.
+            // ----------------------------------------------------------
+            S_CHK_SMK_UP_WT: begin
+                state <= S_CHK_SMK_UP_EV;
+            end
+
+            S_CHK_SMK_UP_EV: begin
+                if (ca_read_data == MAT_EMPTY) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= ((cy - 10'd1) * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_SMOKE;
+                    state         <= S_NEXT_PIXEL;
+                end else begin
+                    if (diag_side == 1'b0) begin
+                        if (cx == 10'd0) begin
+                            if (cx == GRID_WIDTH - 10'd1) begin
+                                ca_we         <= 1'b1;
+                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                ca_write_data <= MAT_SMOKE;
+                                state         <= S_NEXT_PIXEL;
+                            end else begin
+                                ca_read_addr <= ((cy - 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                                state        <= S_CHK_SMK_DIAG2_WT;
+                            end
+                        end else begin
+                            ca_read_addr <= ((cy - 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                            state        <= S_CHK_SMK_DIAG1_WT;
+                        end
+                    end else begin
+                        if (cx == GRID_WIDTH - 10'd1) begin
+                            if (cx == 10'd0) begin
+                                ca_we         <= 1'b1;
+                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                ca_write_data <= MAT_SMOKE;
+                                state         <= S_NEXT_PIXEL;
+                            end else begin
+                                ca_read_addr <= ((cy - 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                                state        <= S_CHK_SMK_DIAG2_WT;
+                            end
+                        end else begin
+                            ca_read_addr <= ((cy - 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                            state        <= S_CHK_SMK_DIAG1_WT;
+                        end
+                    end
+                end
+            end
+
+            S_CHK_SMK_DIAG1_WT: begin
+                state <= S_CHK_SMK_DIAG1_EV;
+            end
+
+            S_CHK_SMK_DIAG1_EV: begin
+                if (ca_read_data == MAT_EMPTY) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                    ? ((cy - 10'd1) * GRID_WIDTH) + (cx - 10'd1)
+                                    : ((cy - 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                    ca_write_data <= MAT_SMOKE;
+                    state         <= S_NEXT_PIXEL;
+                end else begin
+                    if (diag_side == 1'b0) begin
+                        if (cx == GRID_WIDTH - 10'd1) begin
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_SMOKE;
+                            state         <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= ((cy - 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                            state        <= S_CHK_SMK_DIAG2_WT;
+                        end
+                    end else begin
+                        if (cx == 10'd0) begin
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_SMOKE;
+                            state         <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= ((cy - 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                            state        <= S_CHK_SMK_DIAG2_WT;
+                        end
+                    end
+                end
+            end
+
+            S_CHK_SMK_DIAG2_WT: begin
+                state <= S_CHK_SMK_DIAG2_EV;
+            end
+
+            S_CHK_SMK_DIAG2_EV: begin
+                if (ca_read_data == MAT_EMPTY) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                    ? ((cy - 10'd1) * GRID_WIDTH) + (cx + 10'd1)
+                                    : ((cy - 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                    ca_write_data <= MAT_SMOKE;
+                end else begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_SMOKE;
+                end
+                state <= S_NEXT_PIXEL;
             end
 
             // ----------------------------------------------------------
