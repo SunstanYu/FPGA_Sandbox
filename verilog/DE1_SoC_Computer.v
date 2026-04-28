@@ -205,6 +205,7 @@ wire [31:0] hps_keys;
 // Grid Resolution
 parameter GRID_WIDTH  = 10'd320;
 parameter GRID_HEIGHT = 10'd240;
+parameter CANVAS_ROWS = 10'd200; // Canvas area (y=0..199, toolbar is y=200..239)
 parameter MAX_CELLS   = 17'd76800; // 320 * 240
 
 // Material Definitions
@@ -519,7 +520,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                 ca_write_data <= MAT_EMPTY;
                 if (clear_addr == MAX_CELLS - 17'd1) begin
                     cx    <= 10'd0;
-                    cy    <= GRID_HEIGHT - 10'd1; // 从底行开始向上扫
+                    cy    <= CANVAS_ROWS - 10'd1; // 从底行开始向上扫
                     state <= S_SWEEP_READ;
                 end else begin
                     clear_addr <= clear_addr + 17'd1;
@@ -560,7 +561,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end
 
                     MAT_FIRE: begin
-                        if (cy == GRID_HEIGHT - 10'd1) begin
+                        if (cy == CANVAS_ROWS - 10'd1) begin
                             // Bottom row flames do not pile up like sand; they flicker out.
                             if (random_bit) begin
                                 ca_we         <= 1'b1;
@@ -587,7 +588,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end
 
                     MAT_SAND: begin
-                        if (cy == GRID_HEIGHT - 10'd1) begin
+                        if (cy == CANVAS_ROWS - 10'd1) begin
                             // Already at the bottom row, stay there.
                             ca_we         <= 1'b1;
                             ca_write_addr <= (cy * GRID_WIDTH) + cx;
@@ -601,7 +602,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end
 
                     MAT_WATER: begin
-                        if (cy == GRID_HEIGHT - 10'd1) begin
+                        if (cy == CANVAS_ROWS - 10'd1) begin
                             // Already at the bottom row, stay there.
                             ca_we         <= 1'b1;
                             ca_write_addr <= (cy * GRID_WIDTH) + cx;
@@ -901,20 +902,54 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             S_CHK_FIRE_BOT_EV: begin
                 if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    // Fire falls straight down through empty space or smoke
                     ca_we         <= 1'b1;
                     ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
                     state         <= S_NEXT_PIXEL;
                 end else if (ca_read_data == MAT_WATER) begin
-                    // Water below extinguishes this flame.
+                    // Water below extinguishes this flame
                     state <= S_NEXT_PIXEL;
                 end else begin
-                    // Solid materials below support the flame. Sand/water/wall brush
-                    // writes and moving sand/water may still overwrite this cell.
-                    ca_we         <= 1'b1;
-                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                    ca_write_data <= MAT_FIRE;
-                    state         <= S_NEXT_PIXEL;
+                    // Solid materials (sand/wall/fire) below — try diagonal spread
+                    // Need to issue a read for DIAG1 first
+                    if (diag_side == 1'b0) begin
+                        // Try left-down first
+                        if (cx == 10'd0) begin
+                            // Left edge, skip to right-down
+                            if (cx == GRID_WIDTH - 10'd1) begin
+                                // Both edges trapped — burn in place
+                                ca_we         <= 1'b1;
+                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                ca_write_data <= MAT_FIRE;
+                                state         <= S_NEXT_PIXEL;
+                            end else begin
+                                ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                                state        <= S_CHK_FIRE_DIAG2_WT;
+                            end
+                        end else begin
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                            state        <= S_CHK_FIRE_DIAG1_WT;
+                        end
+                    end else begin
+                        // Try right-down first
+                        if (cx == GRID_WIDTH - 10'd1) begin
+                            // Right edge, skip to left-down
+                            if (cx == 10'd0) begin
+                                // Both edges trapped — burn in place
+                                ca_we         <= 1'b1;
+                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                ca_write_data <= MAT_FIRE;
+                                state         <= S_NEXT_PIXEL;
+                            end else begin
+                                ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                                state        <= S_CHK_FIRE_DIAG2_WT;
+                            end
+                        end else begin
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                            state        <= S_CHK_FIRE_DIAG1_WT;
+                        end
+                    end
                 end
             end
 
@@ -933,14 +968,22 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                 end else begin
                     if (diag_side == 1'b0) begin
                         if (cx == GRID_WIDTH - 10'd1) begin
-                            state <= S_NEXT_PIXEL;
+                            // Right edge, cannot try right-down — burn in place
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_FIRE;
+                            state         <= S_NEXT_PIXEL;
                         end else begin
                             ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
                             state        <= S_CHK_FIRE_DIAG2_WT;
                         end
                     end else begin
                         if (cx == 10'd0) begin
-                            state <= S_NEXT_PIXEL;
+                            // Left edge, cannot try left-down — burn in place
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_FIRE;
+                            state         <= S_NEXT_PIXEL;
                         end else begin
                             ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
                             state        <= S_CHK_FIRE_DIAG2_WT;
@@ -955,13 +998,54 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             S_CHK_FIRE_DIAG2_EV: begin
                 if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    // Fallback diagonal is free — spread there
                     ca_we         <= 1'b1;
                     ca_write_addr <= (diag_side == 1'b0)
                                     ? ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1)
                                     : ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
                     ca_write_data <= MAT_FIRE;
+                    state         <= S_NEXT_PIXEL;
+                end else begin
+                    // Both diagonals blocked — try side spread
+                    // Need to issue a read for SIDE1 first
+                    if (diag_side == 1'b0) begin
+                        // Try left side first
+                        if (cx == 10'd0) begin
+                            // Left edge, skip to right
+                            if (cx == GRID_WIDTH - 10'd1) begin
+                                // Both edges trapped — burn in place
+                                ca_we         <= 1'b1;
+                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                ca_write_data <= MAT_FIRE;
+                                state         <= S_NEXT_PIXEL;
+                            end else begin
+                                ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                                state        <= S_CHK_FIRE_SIDE2_WT;
+                            end
+                        end else begin
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                            state        <= S_CHK_FIRE_SIDE1_WT;
+                        end
+                    end else begin
+                        // Try right side first
+                        if (cx == GRID_WIDTH - 10'd1) begin
+                            // Right edge, skip to left
+                            if (cx == 10'd0) begin
+                                // Both edges trapped — burn in place
+                                ca_we         <= 1'b1;
+                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                ca_write_data <= MAT_FIRE;
+                                state         <= S_NEXT_PIXEL;
+                            end else begin
+                                ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                                state        <= S_CHK_FIRE_SIDE2_WT;
+                            end
+                        end else begin
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                            state        <= S_CHK_FIRE_SIDE1_WT;
+                        end
+                    end
                 end
-                state <= S_NEXT_PIXEL;
             end
 
             S_CHK_FIRE_SIDE1_WT: begin
@@ -979,14 +1063,22 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                 end else begin
                     if (diag_side == 1'b0) begin
                         if (cx == GRID_WIDTH - 10'd1) begin
-                            state <= S_NEXT_PIXEL;
+                            // Right edge, cannot try right — burn in place
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_FIRE;
+                            state         <= S_NEXT_PIXEL;
                         end else begin
                             ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
                             state        <= S_CHK_FIRE_SIDE2_WT;
                         end
                     end else begin
                         if (cx == 10'd0) begin
-                            state <= S_NEXT_PIXEL;
+                            // Left edge, cannot try left — burn in place
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_FIRE;
+                            state         <= S_NEXT_PIXEL;
                         end else begin
                             ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
                             state        <= S_CHK_FIRE_SIDE2_WT;
@@ -1001,10 +1093,16 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             S_CHK_FIRE_SIDE2_EV: begin
                 if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    // Side spread succeeded
                     ca_we         <= 1'b1;
                     ca_write_addr <= (diag_side == 1'b0)
                                     ? (cy * GRID_WIDTH) + (cx + 10'd1)
                                     : (cy * GRID_WIDTH) + (cx - 10'd1);
+                    ca_write_data <= MAT_FIRE;
+                end else begin
+                    // Both sides blocked — burn in place
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
                 end
                 state <= S_NEXT_PIXEL;
