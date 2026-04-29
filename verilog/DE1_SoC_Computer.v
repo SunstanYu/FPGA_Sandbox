@@ -585,9 +585,9 @@ wire [1:0] toolbar_slot;
 assign toolbar_slot = grid_read_x[8:1] >> 6; // 0..4
 
 // Toolbar border computation
-wire toolbar_left_border  = (grid_read_x[9:0] == 10'd0) || (grid_read_x[9:0] == 10'd64) || 
-                             (grid_read_x[9:0] == 10'd128) || (grid_read_x[9:0] == 10'd192) || 
-                             (grid_read_x[9:0] == 10'd256) || (grid_read_x[9:0] == 10'd319);
+wire toolbar_left_border  = (grid_read_x[8:0] == 9'd0) || (grid_read_x[8:0] == 9'd64) || 
+                             (grid_read_x[8:0] == 9'd128) || (grid_read_x[8:0] == 9'd192) || 
+                             (grid_read_x[8:0] == 9'd256) || (grid_read_x[8:0] == 9'd319);
 wire toolbar_top_border    = (grid_read_y[9:0] == 10'd200);
 wire toolbar_bottom_border = (grid_read_y[9:0] == 10'd239);
 wire toolbar_border        = toolbar_left_border | toolbar_top_border | toolbar_bottom_border;
