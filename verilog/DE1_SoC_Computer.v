@@ -205,7 +205,7 @@ wire [31:0] hps_keys;
 // Grid Resolution
 parameter GRID_WIDTH  = 10'd320;
 parameter GRID_HEIGHT = 10'd240;
-parameter CANVAS_ROWS = 10'd200; // Canvas area (y=0..199, toolbar is y=200..239)
+parameter CANVAS_ROWS = 9'd200; // Canvas area (y=0..199, toolbar is y=200..239)
 parameter MAX_CELLS   = 17'd76800; // 320 * 240
 
 // Fire block parameters
@@ -588,8 +588,8 @@ assign toolbar_slot = grid_read_x[8:1] >> 6; // 0..4
 wire toolbar_left_border  = (grid_read_x[8:0] == 9'd0) || (grid_read_x[8:0] == 9'd64) || 
                              (grid_read_x[8:0] == 9'd128) || (grid_read_x[8:0] == 9'd192) || 
                              (grid_read_x[8:0] == 9'd256) || (grid_read_x[8:0] == 9'd319);
-wire toolbar_top_border    = (grid_read_y[9:0] == 10'd200);
-wire toolbar_bottom_border = (grid_read_y[9:0] == 10'd239);
+wire toolbar_top_border    = (grid_read_y[8:0] == 9'd200);
+wire toolbar_bottom_border = (grid_read_y[8:0] == 9'd239);
 wire toolbar_border        = toolbar_left_border | toolbar_top_border | toolbar_bottom_border;
 
 wire toolbar_selected_slot;
@@ -664,10 +664,10 @@ wire toolbar_divider = (grid_read_x[8:0] >= 9'd63  && grid_read_x[8:0] <= 9'd64)
                        (grid_read_x[8:0] >= 9'd255 && grid_read_x[8:0] <= 9'd256);
 
 // Toolbar top thick border at y=198..199 (2px high line above the toolbar)
-wire toolbar_top_bar = (grid_read_y[9:0] >= 10'd198 && grid_read_y[9:0] <= 10'd199);
+wire toolbar_top_bar = (grid_read_y[8:0] >= 9'd198 && grid_read_y[8:0] <= 9'd199);
 
 // Toolbar bottom border at y=238..239
-wire toolbar_bottom_bar = (grid_read_y[9:0] >= 10'd238 && grid_read_y[9:0] <= 10'd239);
+wire toolbar_bottom_bar = (grid_read_y[8:0] >= 9'd238 && grid_read_y[8:0] <= 9'd239);
 
 // Selected slot bounding box: entire slot 四周白框
 wire slot_sel_left  = (toolbar_slot == 2'd0) && (grid_read_x[8:0] == 9'd0);
@@ -676,8 +676,8 @@ wire slot_sel_right2 = (toolbar_slot == 2'd1) && (grid_read_x[8:0] == 9'd127);
 wire slot_sel_right3 = (toolbar_slot == 2'd2) && (grid_read_x[8:0] == 9'd191);
 wire slot_sel_right4 = (toolbar_slot == 2'd3) && (grid_read_x[8:0] == 9'd255);
 wire slot_sel_right5 = (toolbar_slot == 2'd4) && (grid_read_x[8:0] == 9'd319);
-wire slot_sel_top    = (grid_read_y[9:0] == 10'd200);
-wire slot_sel_bottom = (grid_read_y[9:0] == 10'd239);
+wire slot_sel_top    = (grid_read_y[8:0] == 9'd200);
+wire slot_sel_bottom = (grid_read_y[8:0] == 9'd239);
 wire slot_sel_vert   = toolbar_selected_slot && (slot_sel_left || slot_sel_right || slot_sel_right2 || slot_sel_right3 || slot_sel_right4 || slot_sel_right5);
 wire slot_sel_horiz  = toolbar_selected_slot && (slot_sel_top || slot_sel_bottom);
 
@@ -694,14 +694,14 @@ wire slot_sel_horiz  = toolbar_selected_slot && (slot_sel_top || slot_sel_bottom
 // 文字区域：y=208..212 (5px高)
 // 每个 slot=64px宽，文字居中
 
-wire in_text_area_y = (grid_read_y[9:0] >= 10'd208 && grid_read_y[9:0] <= 10'd212);
+wire in_text_area_y = (grid_read_y[8:0] >= 9'd208 && grid_read_y[8:0] <= 9'd212);
 
 // --- SLOT 0: "WALL" (4 chars * 3px = 12px, 3 gaps = 15px) 居中：起点 x=24 ---
-wire t0_y0 = in_text_area_y && (grid_read_y[9:0] == 10'd208); // row 0
-wire t0_y1 = in_text_area_y && (grid_read_y[9:0] == 10'd209); // row 1
-wire t0_y2 = in_text_area_y && (grid_read_y[9:0] == 10'd210); // row 2
-wire t0_y3 = in_text_area_y && (grid_read_y[9:0] == 10'd211); // row 3
-wire t0_y4 = in_text_area_y && (grid_read_y[9:0] == 10'd212); // row 4
+wire t0_y0 = in_text_area_y && (grid_read_y[8:0] == 9'd208); // row 0
+wire t0_y1 = in_text_area_y && (grid_read_y[8:0] == 9'd209); // row 1
+wire t0_y2 = in_text_area_y && (grid_read_y[8:0] == 9'd210); // row 2
+wire t0_y3 = in_text_area_y && (grid_read_y[8:0] == 9'd211); // row 3
+wire t0_y4 = in_text_area_y && (grid_read_y[8:0] == 9'd212); // row 4
 
 // WALL 点阵: W(101/101/111/111/110) A(010/101/111/101/101) L(100/100/100/100/111) L(same)
 wire t0_pixel =
@@ -733,11 +733,11 @@ wire t0_pixel =
 
 // --- SLOT 1: "WATER" (5chars) 起点 x=23 (居中于0..63) ---
 // x: W=23-25, 空=26, A=27-29, 空=30, T=31-33, 空=34, E=35-37, 空=38, R=39-41
-wire t1_y0 = in_text_area_y && (grid_read_y[9:0] == 10'd208);
-wire t1_y1 = in_text_area_y && (grid_read_y[9:0] == 10'd209);
-wire t1_y2 = in_text_area_y && (grid_read_y[9:0] == 10'd210);
-wire t1_y3 = in_text_area_y && (grid_read_y[9:0] == 10'd211);
-wire t1_y4 = in_text_area_y && (grid_read_y[9:0] == 10'd212);
+wire t1_y0 = in_text_area_y && (grid_read_y[8:0] == 9'd208);
+wire t1_y1 = in_text_area_y && (grid_read_y[8:0] == 9'd209);
+wire t1_y2 = in_text_area_y && (grid_read_y[8:0] == 9'd210);
+wire t1_y3 = in_text_area_y && (grid_read_y[8:0] == 9'd211);
+wire t1_y4 = in_text_area_y && (grid_read_y[8:0] == 9'd212);
 
 wire t1_pixel =
   // W at 23-25:
@@ -773,11 +773,11 @@ wire t1_pixel =
 ;
 
 // --- SLOT 2: "SAND" (4chars) 起点x=24 (64宽中置12+3空格=15: (64-15)/2=24.5->24) ---
-wire t2_y0 = in_text_area_y && (grid_read_y[9:0] == 10'd208);
-wire t2_y1 = in_text_area_y && (grid_read_y[9:0] == 10'd209);
-wire t2_y2 = in_text_area_y && (grid_read_y[9:0] == 10'd210);
-wire t2_y3 = in_text_area_y && (grid_read_y[9:0] == 10'd211);
-wire t2_y4 = in_text_area_y && (grid_read_y[9:0] == 10'd212);
+wire t2_y0 = in_text_area_y && (grid_read_y[8:0] == 9'd208);
+wire t2_y1 = in_text_area_y && (grid_read_y[8:0] == 9'd209);
+wire t2_y2 = in_text_area_y && (grid_read_y[8:0] == 9'd210);
+wire t2_y3 = in_text_area_y && (grid_read_y[8:0] == 9'd211);
+wire t2_y4 = in_text_area_y && (grid_read_y[8:0] == 9'd212);
 
 wire t2_pixel =
   // S at 124-126 (slot 2 x range 128..191, S starts at 128+24-128=24... no, slot2 is x=128..191, offset 24 means x=152)
@@ -809,11 +809,11 @@ wire t2_pixel =
 ;
 
 // --- SLOT 3: "FIRE" (4chars) x range 192..255, text starts 192+24=216 ---
-wire t3_y0 = in_text_area_y && (grid_read_y[9:0] == 10'd208);
-wire t3_y1 = in_text_area_y && (grid_read_y[9:0] == 10'd209);
-wire t3_y2 = in_text_area_y && (grid_read_y[9:0] == 10'd210);
-wire t3_y3 = in_text_area_y && (grid_read_y[9:0] == 10'd211);
-wire t3_y4 = in_text_area_y && (grid_read_y[9:0] == 10'd212);
+wire t3_y0 = in_text_area_y && (grid_read_y[8:0] == 9'd208);
+wire t3_y1 = in_text_area_y && (grid_read_y[8:0] == 9'd209);
+wire t3_y2 = in_text_area_y && (grid_read_y[8:0] == 9'd210);
+wire t3_y3 = in_text_area_y && (grid_read_y[8:0] == 9'd211);
+wire t3_y4 = in_text_area_y && (grid_read_y[8:0] == 9'd212);
 
 wire t3_pixel =
   // F at x=216..218:
@@ -843,11 +843,11 @@ wire t3_pixel =
 ;
 
 // --- SLOT 4: "SMOKE" (5chars) x range 256..319, text starts 256+23=279 ---
-wire t4_y0 = in_text_area_y && (grid_read_y[9:0] == 10'd208);
-wire t4_y1 = in_text_area_y && (grid_read_y[9:0] == 10'd209);
-wire t4_y2 = in_text_area_y && (grid_read_y[9:0] == 10'd210);
-wire t4_y3 = in_text_area_y && (grid_read_y[9:0] == 10'd211);
-wire t4_y4 = in_text_area_y && (grid_read_y[9:0] == 10'd212);
+wire t4_y0 = in_text_area_y && (grid_read_y[8:0] == 9'd208);
+wire t4_y1 = in_text_area_y && (grid_read_y[8:0] == 9'd209);
+wire t4_y2 = in_text_area_y && (grid_read_y[8:0] == 9'd210);
+wire t4_y3 = in_text_area_y && (grid_read_y[8:0] == 9'd211);
+wire t4_y4 = in_text_area_y && (grid_read_y[8:0] == 9'd212);
 
 wire t4_pixel =
   // S at x=279..281:
