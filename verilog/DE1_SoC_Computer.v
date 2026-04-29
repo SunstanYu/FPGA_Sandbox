@@ -395,6 +395,9 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
         fire_register_x       <= 9'd0;
         fire_register_y       <= 9'd0;
     end else begin
+        // Default: hold values (prevent latch inference)
+        fire_register_trigger <= fire_register_trigger;
+
         // Deactivate blocks whose root cell is overwritten by brush
         if (brush_we_edge && brush_data_sync != MAT_FIRE) begin
             for (k = 0; k < 16; k = k + 1) begin
@@ -420,10 +423,15 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                         skip = 1;
                 end
                 if (!skip) begin
-                    integer slot;
+                    integer slot, found_slot;
                     slot = 16;
-                    for (k = 0; k < 16; k = k + 1)
-                        if (!fire_root_active[k]) begin slot = k; k = 16; end
+                    found_slot = 0;
+                    for (k = 0; k < 16; k = k + 1) begin
+                        if (!fire_root_active[k] && !found_slot) begin
+                            slot = k;
+                            found_slot = 1;
+                        end
+                    end
                     if (slot == 16) slot = 0;
                     fire_root_x[slot]      <= fire_register_x;
                     fire_root_y[slot]      <= fire_register_y;
