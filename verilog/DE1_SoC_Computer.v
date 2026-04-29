@@ -582,7 +582,7 @@ assign in_toolbar = (grid_read_y >= 9'd200 && grid_read_y <= 9'd239);
 
 // Toolbar slot computation (5 slots of 64px each)
 wire [1:0] toolbar_slot;
-assign toolbar_slot = grid_read_x[9:1] / 5'd64; // 0..4
+assign toolbar_slot = grid_read_x[8:1] >> 6; // 0..4
 
 // Toolbar border computation
 wire toolbar_left_border  = (grid_read_x[9:0] == 10'd0) || (grid_read_x[9:0] == 10'd64) || 
