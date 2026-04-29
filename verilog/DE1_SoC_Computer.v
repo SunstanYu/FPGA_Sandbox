@@ -365,82 +365,6 @@ assign vga_data_out = (active_buffer == 1'b0) ? vga_q_A : vga_q_B;
 //   active=1: front is B => read ca_q_B
 assign ca_read_data = (active_buffer == 1'b0) ? ca_q_A : ca_q_B;
 
-//=======================================================
-// Feature 1: Fire Block Visualization
-// Up to 16 fire blocks tracked. Each renders as 16w x 12h animated flame
-// around a registered root position (X,Y at bottom-center of block).
-//
-// Registration: fire_register_trigger is pulsed from the CA state machine
-// when fire falls and lands on/above sand/wall/fire surface.
-// If already within 16px of an existing block root, skip.
-// Deactivation: when brush writes non-fire to a root cell.
-//=======================================================
-reg  [8:0] fire_root_x     [0:15];
-reg  [8:0] fire_root_y     [0:15];
-reg        fire_root_active[0:15];
-reg        fire_register_trigger;
-reg  [8:0] fire_register_x;
-reg  [8:0] fire_register_y;
-
-// Fire block register + deactivate on brush write
-always @(posedge M10k_pll or negedge sys_reset_n) begin
-    integer i, k;
-    if (!sys_reset_n) begin
-        for (i = 0; i < 16; i = i + 1) begin
-            fire_root_x[i]     <= 9'd0;
-            fire_root_y[i]     <= 9'd0;
-            fire_root_active[i] <= 1'b0;
-        end
-        fire_register_trigger <= 1'b0;
-        fire_register_x       <= 9'd0;
-        fire_register_y       <= 9'd0;
-    end else begin
-        // Default: hold values (prevent latch inference)
-        fire_register_trigger <= fire_register_trigger;
-
-        // Deactivate blocks whose root cell is overwritten by brush
-        if (brush_we_edge && brush_data_sync != MAT_FIRE) begin
-            for (k = 0; k < 16; k = k + 1) begin
-                if (fire_root_active[k] &&
-                    brush_addr_sync[16:0] == ((fire_root_y[k] * GRID_WIDTH) + fire_root_x[k]))
-                    fire_root_active[k] <= 1'b0;
-            end
-        end
-
-        // Register from trigger pulse
-        if (fire_register_trigger) begin
-            fire_register_trigger <= 1'b0;
-
-            // Overlap guard: skip if within 16px of existing root on same row
-            if (1) begin
-                integer skip;
-                skip = 0;
-                for (k = 0; k < 16; k = k + 1) begin
-                    if (fire_root_active[k] &&
-                        $signed(fire_register_y) == $signed(fire_root_y[k]) &&
-                        $signed(fire_register_x) >= $signed(fire_root_x[k]) - 9'd16 &&
-                        $signed(fire_register_x) <= $signed(fire_root_x[k]) + 9'd15)
-                        skip = 1;
-                end
-                if (!skip) begin
-                    integer slot, found_slot;
-                    slot = 16;
-                    found_slot = 0;
-                    for (k = 0; k < 16; k = k + 1) begin
-                        if (!fire_root_active[k] && !found_slot) begin
-                            slot = k;
-                            found_slot = 1;
-                        end
-                    end
-                    if (slot == 16) slot = 0;
-                    fire_root_x[slot]      <= fire_register_x;
-                    fire_root_y[slot]      <= fire_register_y;
-                    fire_root_active[slot] <= 1'b1;
-                end
-            end
-        end
-    end
-end
 
 //=======================================================
 // VGA Color Mapper
@@ -460,120 +384,6 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 end
 
 // ============================================================
-// Flame Shape ROM (Feature 1)
-// 4 frames x 12 rows x 16 bits. Each row defines which columns
-// of the fire block have flame. Fire block is 16 wide, centered
-// on the root position (root is at the bottom center).
-// Rows 0-1 are ember base (bottom), rows 2-11 are flame.
-// ============================================================
-wire [15:0] flame_shape [0:47]; // 4 frames * 12 rows
-
-// Frame 0: baseline flame shape
-assign flame_shape[ 0] = 16'b00000000_00000000; // row 0 (top) — empty for frame 0
-assign flame_shape[ 1] = 16'b00000011_11000000; // row 1
-assign flame_shape[ 2] = 16'b00001111_11110000;
-assign flame_shape[ 3] = 16'b00111111_11111100;
-assign flame_shape[ 4] = 16'b01111111_11111110;
-assign flame_shape[ 5] = 16'b01111111_11111110;
-assign flame_shape[ 6] = 16'b11111111_11111111;
-assign flame_shape[ 7] = 16'b11111111_11111111;
-assign flame_shape[ 8] = 16'b11111111_11111111;
-assign flame_shape[ 9] = 16'b11111111_11111111;
-assign flame_shape[10] = 16'b11111111_11111111; // row 10 (base-1)
-assign flame_shape[11] = 16'b11111111_11111111; // row 11 (ember base)
-
-// Frame 1: shifted right by 1
-assign flame_shape[12+ 0] = 16'b00000011_11000000;
-assign flame_shape[12+ 1] = 16'b00001111_11110000;
-assign flame_shape[12+ 2] = 16'b00111111_11111100;
-assign flame_shape[12+ 3] = 16'b01111111_11111110;
-assign flame_shape[12+ 4] = 16'b11111111_11111111;
-assign flame_shape[12+ 5] = 16'b11111111_11111111;
-assign flame_shape[12+ 6] = 16'b11111111_11111111;
-assign flame_shape[12+ 7] = 16'b11111111_11111111;
-assign flame_shape[12+ 8] = 16'b11111111_11111111;
-assign flame_shape[12+ 9] = 16'b11111111_11111111;
-assign flame_shape[12+10] = 16'b11111111_11111111;
-assign flame_shape[12+11] = 16'b11111111_11111111;
-
-// Frame 2: shifted left by 1
-assign flame_shape[24+ 0] = 16'b00000001_11100000;
-assign flame_shape[24+ 1] = 16'b00001111_11100000;
-assign flame_shape[24+ 2] = 16'b00011111_11110000;
-assign flame_shape[24+ 3] = 16'b00111111_11111000;
-assign flame_shape[24+ 4] = 16'b01111111_11111100;
-assign flame_shape[24+ 5] = 16'b01111111_11111110;
-assign flame_shape[24+ 6] = 16'b11111111_11111110;
-assign flame_shape[24+ 7] = 16'b11111111_11111111;
-assign flame_shape[24+ 8] = 16'b11111111_11111111;
-assign flame_shape[24+ 9] = 16'b11111111_11111111;
-assign flame_shape[24+10] = 16'b11111111_11111111;
-assign flame_shape[24+11] = 16'b11111111_11111111;
-
-// Frame 3: centered + flicker top
-assign flame_shape[36+ 0] = 16'b00000000_01111000;
-assign flame_shape[36+ 1] = 16'b00000011_11110000;
-assign flame_shape[36+ 2] = 16'b00001111_11111000;
-assign flame_shape[36+ 3] = 16'b00111111_11111100;
-assign flame_shape[36+ 4] = 16'b01111111_11111110;
-assign flame_shape[36+ 5] = 16'b01111111_11111110;
-assign flame_shape[36+ 6] = 16'b11111111_11111111;
-assign flame_shape[36+ 7] = 16'b11111111_11111111;
-assign flame_shape[36+ 8] = 16'b11111111_11111111;
-assign flame_shape[36+ 9] = 16'b11111111_11111111;
-assign flame_shape[36+10] = 16'b11111111_11111111;
-assign flame_shape[36+11] = 16'b11111111_11111111;
-
-// ============================================================
-// Fire block lookup signals
-// ============================================================
-wire        in_fire_block;
-wire        is_flame_pixel;
-wire        is_ember_pixel;
-
-// For each block, compute range check and shape match.
-// OR all block results together.
-generate
-    genvar fb_i;
-    wire [15:0] fb_in_block;  // per-block: pixel in fire block bounds
-    wire [15:0] fb_flame;     // per-block: pixel should be flame
-    wire [15:0] fb_ember;     // per-block: pixel should be ember
-    for (fb_i = 0; fb_i < 16; fb_i = fb_i + 1) begin : fb_lookup
-        
-        // Range check: within 16 wide, 12 tall around root
-        wire in_x = ($signed(grid_read_x) >= ($signed(fire_root_x[fb_i]) - 9'd8)) &&
-                     ($signed(grid_read_x) <= ($signed(fire_root_x[fb_i]) + 9'd7));
-        wire in_y = ($signed(grid_read_y) >= ($signed(fire_root_y[fb_i]) - 9'd11)) &&
-                     ($signed(grid_read_y) <= ($signed(fire_root_y[fb_i])));
-        wire fb_active = fire_root_active[fb_i] && in_x && in_y;
-        
-        // Row offset: 0=bottom/ember (root_y), 11=top of flame (root_y-11)
-        // But our ROM rows are 0=top, 11=ember, so we need to invert:
-        // rom_row = 11 - block_row
-        wire [3:0] block_row_inv;
-        assign block_row_inv = 4'd11 - (fire_root_y[fb_i] - grid_read_y);
-        
-        // Col offset: 0=left (root_x-8), 15=right (root_x+7)
-        wire [3:0] block_col;
-        assign block_col = grid_read_x - fire_root_x[fb_i] + 9'd8;
-        
-        // Flame shape lookup: 4 frames * 12 rows = 48 entries
-        wire [5:0] shape_addr;
-        assign shape_addr = {visual_anim_ctr[1:0], block_row_inv};
-        wire [15:0] shape_row;
-        assign shape_row = flame_shape[shape_addr];
-        
-        // Flame rows: 0-9, ember rows: 10-11
-        assign fb_in_block[fb_i] = fb_active;
-        assign fb_flame[fb_i] = fb_active && (block_row_inv < 4'd10) && shape_row[block_col];
-        assign fb_ember[fb_i] = fb_active && (block_row_inv >= 4'd10) && (block_row_inv <= 4'd11);
-    end
-endgenerate
-
-assign in_fire_block = |fb_in_block;
-assign is_flame_pixel = |fb_flame;
-assign is_ember_pixel = |fb_ember;
-
 // ============================================================
 // Toolbar color signals (Feature 2)
 // ============================================================
@@ -922,18 +732,6 @@ always @(*) begin
     // else: dark bg
 end
 
-// Fire block color - average color across all active blocks
-reg [7:0] fire_color;
-always @(*) begin
-    if (is_ember_pixel) begin
-        fire_color = visual_anim_ctr[0] ? 8'b111_100_00 : 8'b111_011_00;
-    end else if (is_flame_pixel) begin
-        // Use a representative row for coloring (from first matching block)
-        fire_color = visual_anim_ctr[1] ? 8'b111_011_00 : 8'b111_000_00;
-    end else begin
-        fire_color = 8'b000_000_00;
-    end
-end
 
 // Cursor color
 reg [7:0] cursor_color;
@@ -951,8 +749,6 @@ always @(*) begin
     final_vga_color = grid_color; // Default: grid material
     if (in_toolbar)
         final_vga_color = toolbar_color;
-    if (in_fire_block && (is_flame_pixel | is_ember_pixel))
-        final_vga_color = fire_color;
     if (cursor_center | cursor_ring)
         final_vga_color = cursor_color; // Cursor on top
     // Pause indicator (Feature 4): bright white bars on top of everything when paused
@@ -1687,9 +1483,6 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_we         <= 1'b1;
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
-                    fire_register_trigger <= 1'b1;
-                    fire_register_x       <= cx[8:0];
-                    fire_register_y       <= cy[8:0];
                 end
                 state <= S_NEXT_PIXEL;
             end
