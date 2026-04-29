@@ -366,6 +366,83 @@ assign vga_data_out = (active_buffer == 1'b0) ? vga_q_A : vga_q_B;
 assign ca_read_data = (active_buffer == 1'b0) ? ca_q_A : ca_q_B;
 
 //=======================================================
+// Feature 1: Fire Block Visualization
+// Up to 16 fire blocks tracked. Each renders as 16w x 12h animated flame
+// around a registered root position (X,Y at bottom-center of block).
+//
+// Registration: fire_register_trigger is pulsed from the CA state machine
+// when fire falls and lands on/above sand/wall/fire surface.
+// If already within 16px of an existing block root, skip.
+// Deactivation: when brush writes non-fire to a root cell.
+//=======================================================
+reg  [8:0] fire_root_x     [0:15];
+reg  [8:0] fire_root_y     [0:15];
+reg        fire_root_active[0:15];
+reg        fire_register_trigger;
+reg  [8:0] fire_register_x;
+reg  [8:0] fire_register_y;
+
+// Fire block register + deactivate on brush write
+always @(posedge M10k_pll or negedge sys_reset_n) begin
+    integer i, k;
+    if (!sys_reset_n) begin
+        for (i = 0; i < 16; i = i + 1) begin
+            fire_root_x[i]     <= 9'd0;
+            fire_root_y[i]     <= 9'd0;
+            fire_root_active[i] <= 1'b0;
+        end
+        fire_register_trigger <= 1'b0;
+        fire_register_x       <= 9'd0;
+        fire_register_y       <= 9'd0;
+    end else begin
+        // Default: hold values (prevent latch inference)
+        fire_register_trigger <= fire_register_trigger;
+
+        // Deactivate blocks whose root cell is overwritten by brush
+        if (brush_we_edge && brush_data_sync != MAT_FIRE) begin
+            for (k = 0; k < 16; k = k + 1) begin
+                if (fire_root_active[k] &&
+                    brush_addr_sync[16:0] == ((fire_root_y[k] * GRID_WIDTH) + fire_root_x[k]))
+                    fire_root_active[k] <= 1'b0;
+            end
+        end
+
+        // Register from trigger pulse
+        if (fire_register_trigger) begin
+            fire_register_trigger <= 1'b0;
+
+            // Overlap guard: skip if within 16px of existing root on same row
+            if (1) begin
+                integer skip;
+                skip = 0;
+                for (k = 0; k < 16; k = k + 1) begin
+                    if (fire_root_active[k] &&
+                        $signed(fire_register_y) == $signed(fire_root_y[k]) &&
+                        $signed(fire_register_x) >= $signed(fire_root_x[k]) - 9'd16 &&
+                        $signed(fire_register_x) <= $signed(fire_root_x[k]) + 9'd15)
+                        skip = 1;
+                end
+                if (!skip) begin
+                    integer slot, found_slot;
+                    slot = 16;
+                    found_slot = 0;
+                    for (k = 0; k < 16; k = k + 1) begin
+                        if (!fire_root_active[k] && !found_slot) begin
+                            slot = k;
+                            found_slot = 1;
+                        end
+                    end
+                    if (slot == 16) slot = 0;
+                    fire_root_x[slot]      <= fire_register_x;
+                    fire_root_y[slot]      <= fire_register_y;
+                    fire_root_active[slot] <= 1'b1;
+                end
+            end
+        end
+    end
+end
+
+//=======================================================
 // VGA Color Mapper
 //=======================================================
 // Fire and smoke animation is display-only; physics still stores only MAT_*.
@@ -382,6 +459,122 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
     end
 end
 
+// ============================================================
+// Flame Shape ROM (Feature 1)
+// 4 frames x 12 rows x 16 bits. Each row defines which columns
+// of the fire block have flame. Fire block is 16 wide, centered
+// on the root position (root is at the bottom center).
+// Rows 0-1 are ember base (bottom), rows 2-11 are flame.
+// ============================================================
+wire [15:0] flame_shape [0:47]; // 4 frames * 12 rows
+
+// Frame 0: baseline flame shape
+assign flame_shape[ 0] = 16'b00000000_00000000; // row 0 (top) — empty for frame 0
+assign flame_shape[ 1] = 16'b00000011_11000000; // row 1
+assign flame_shape[ 2] = 16'b00001111_11110000;
+assign flame_shape[ 3] = 16'b00111111_11111100;
+assign flame_shape[ 4] = 16'b01111111_11111110;
+assign flame_shape[ 5] = 16'b01111111_11111110;
+assign flame_shape[ 6] = 16'b11111111_11111111;
+assign flame_shape[ 7] = 16'b11111111_11111111;
+assign flame_shape[ 8] = 16'b11111111_11111111;
+assign flame_shape[ 9] = 16'b11111111_11111111;
+assign flame_shape[10] = 16'b11111111_11111111; // row 10 (base-1)
+assign flame_shape[11] = 16'b11111111_11111111; // row 11 (ember base)
+
+// Frame 1: shifted right by 1
+assign flame_shape[12+ 0] = 16'b00000011_11000000;
+assign flame_shape[12+ 1] = 16'b00001111_11110000;
+assign flame_shape[12+ 2] = 16'b00111111_11111100;
+assign flame_shape[12+ 3] = 16'b01111111_11111110;
+assign flame_shape[12+ 4] = 16'b11111111_11111111;
+assign flame_shape[12+ 5] = 16'b11111111_11111111;
+assign flame_shape[12+ 6] = 16'b11111111_11111111;
+assign flame_shape[12+ 7] = 16'b11111111_11111111;
+assign flame_shape[12+ 8] = 16'b11111111_11111111;
+assign flame_shape[12+ 9] = 16'b11111111_11111111;
+assign flame_shape[12+10] = 16'b11111111_11111111;
+assign flame_shape[12+11] = 16'b11111111_11111111;
+
+// Frame 2: shifted left by 1
+assign flame_shape[24+ 0] = 16'b00000001_11100000;
+assign flame_shape[24+ 1] = 16'b00001111_11100000;
+assign flame_shape[24+ 2] = 16'b00011111_11110000;
+assign flame_shape[24+ 3] = 16'b00111111_11111000;
+assign flame_shape[24+ 4] = 16'b01111111_11111100;
+assign flame_shape[24+ 5] = 16'b01111111_11111110;
+assign flame_shape[24+ 6] = 16'b11111111_11111110;
+assign flame_shape[24+ 7] = 16'b11111111_11111111;
+assign flame_shape[24+ 8] = 16'b11111111_11111111;
+assign flame_shape[24+ 9] = 16'b11111111_11111111;
+assign flame_shape[24+10] = 16'b11111111_11111111;
+assign flame_shape[24+11] = 16'b11111111_11111111;
+
+// Frame 3: centered + flicker top
+assign flame_shape[36+ 0] = 16'b00000000_01111000;
+assign flame_shape[36+ 1] = 16'b00000011_11110000;
+assign flame_shape[36+ 2] = 16'b00001111_11111000;
+assign flame_shape[36+ 3] = 16'b00111111_11111100;
+assign flame_shape[36+ 4] = 16'b01111111_11111110;
+assign flame_shape[36+ 5] = 16'b01111111_11111110;
+assign flame_shape[36+ 6] = 16'b11111111_11111111;
+assign flame_shape[36+ 7] = 16'b11111111_11111111;
+assign flame_shape[36+ 8] = 16'b11111111_11111111;
+assign flame_shape[36+ 9] = 16'b11111111_11111111;
+assign flame_shape[36+10] = 16'b11111111_11111111;
+assign flame_shape[36+11] = 16'b11111111_11111111;
+
+// ============================================================
+// Fire block lookup signals
+// ============================================================
+wire        in_fire_block;
+wire        is_flame_pixel;
+wire        is_ember_pixel;
+
+// For each block, compute range check and shape match.
+// OR all block results together.
+generate
+    genvar fb_i;
+    wire [15:0] fb_in_block;  // per-block: pixel in fire block bounds
+    wire [15:0] fb_flame;     // per-block: pixel should be flame
+    wire [15:0] fb_ember;     // per-block: pixel should be ember
+    for (fb_i = 0; fb_i < 16; fb_i = fb_i + 1) begin : fb_lookup
+        
+        // Range check: within 16 wide, 12 tall around root
+        wire in_x = ($signed(grid_read_x) >= ($signed(fire_root_x[fb_i]) - 9'd8)) &&
+                     ($signed(grid_read_x) <= ($signed(fire_root_x[fb_i]) + 9'd7));
+        wire in_y = ($signed(grid_read_y) >= ($signed(fire_root_y[fb_i]) - 9'd11)) &&
+                     ($signed(grid_read_y) <= ($signed(fire_root_y[fb_i])));
+        wire fb_active = fire_root_active[fb_i] && in_x && in_y;
+        
+        // Row offset: 0=bottom/ember (root_y), 11=top of flame (root_y-11)
+        // But our ROM rows are 0=top, 11=ember, so we need to invert:
+        // rom_row = 11 - block_row
+        wire [3:0] block_row_inv;
+        assign block_row_inv = 4'd11 - (fire_root_y[fb_i] - grid_read_y);
+        
+        // Col offset: 0=left (root_x-8), 15=right (root_x+7)
+        wire [3:0] block_col;
+        assign block_col = grid_read_x - fire_root_x[fb_i] + 9'd8;
+        
+        // Flame shape lookup: 4 frames * 12 rows = 48 entries
+        wire [5:0] shape_addr;
+        assign shape_addr = {visual_anim_ctr[1:0], block_row_inv};
+        wire [15:0] shape_row;
+        assign shape_row = flame_shape[shape_addr];
+        
+        // Flame rows: 0-9, ember rows: 10-11
+        assign fb_in_block[fb_i] = fb_active;
+        assign fb_flame[fb_i] = fb_active && (block_row_inv < 4'd10) && shape_row[block_col];
+        assign fb_ember[fb_i] = fb_active && (block_row_inv >= 4'd10) && (block_row_inv <= 4'd11);
+    end
+endgenerate
+
+assign in_fire_block = |fb_in_block;
+assign is_flame_pixel = |fb_flame;
+assign is_ember_pixel = |fb_ember;
+
+// ============================================================
 // Toolbar color signals (Feature 2)
 // ============================================================
 wire in_toolbar;
@@ -395,8 +588,8 @@ assign toolbar_slot = grid_read_x[8:1] >> 6; // 0..4
 wire toolbar_left_border  = (grid_read_x[8:0] == 9'd0) || (grid_read_x[8:0] == 9'd64) || 
                              (grid_read_x[8:0] == 9'd128) || (grid_read_x[8:0] == 9'd192) || 
                              (grid_read_x[8:0] == 9'd256) || (grid_read_x[8:0] == 9'd319);
-wire toolbar_top_border    = (grid_read_y[8:0] == 9'd200);
-wire toolbar_bottom_border = (grid_read_y[8:0] == 9'd239);
+wire toolbar_top_border    = (grid_read_y[9:0] == 10'd200);
+wire toolbar_bottom_border = (grid_read_y[9:0] == 10'd239);
 wire toolbar_border        = toolbar_left_border | toolbar_top_border | toolbar_bottom_border;
 
 wire toolbar_selected_slot;
@@ -462,32 +655,286 @@ always @(*) begin
 end
 
 // Toolbar color
+wire [7:0] toolbar_bg = 8'b010_010_01; // Dark unified background for all slots
+
+// Toolbar divider lines between slots (x = 63,64, 64,65? no — at x=64,65,128,129,..., 2 像素宽分隔线在 64,128,192,256)
+wire toolbar_divider = (grid_read_x[8:0] >= 9'd63  && grid_read_x[8:0] <= 9'd64) ||
+                       (grid_read_x[8:0] >= 9'd127 && grid_read_x[8:0] <= 9'd128) ||
+                       (grid_read_x[8:0] >= 9'd191 && grid_read_x[8:0] <= 9'd192) ||
+                       (grid_read_x[8:0] >= 9'd255 && grid_read_x[8:0] <= 9'd256);
+
+// Toolbar top thick border at y=198..199 (2px high line above the toolbar)
+wire toolbar_top_bar = (grid_read_y[9:0] >= 10'd198 && grid_read_y[9:0] <= 10'd199);
+
+// Toolbar bottom border at y=238..239
+wire toolbar_bottom_bar = (grid_read_y[9:0] >= 10'd238 && grid_read_y[9:0] <= 10'd239);
+
+// Selected slot bounding box: entire slot 四周白框
+wire slot_sel_left  = (toolbar_slot == 2'd0) && (grid_read_x[8:0] == 9'd0);
+wire slot_sel_right = (toolbar_slot == 2'd0) && (grid_read_x[8:0] == 9'd63);
+wire slot_sel_right2 = (toolbar_slot == 2'd1) && (grid_read_x[8:0] == 9'd127);
+wire slot_sel_right3 = (toolbar_slot == 2'd2) && (grid_read_x[8:0] == 9'd191);
+wire slot_sel_right4 = (toolbar_slot == 2'd3) && (grid_read_x[8:0] == 9'd255);
+wire slot_sel_right5 = (toolbar_slot == 2'd4) && (grid_read_x[8:0] == 9'd319);
+wire slot_sel_top    = (grid_read_y[9:0] == 10'd200);
+wire slot_sel_bottom = (grid_read_y[9:0] == 10'd239);
+wire slot_sel_vert   = toolbar_selected_slot && (slot_sel_left || slot_sel_right || slot_sel_right2 || slot_sel_right3 || slot_sel_right4 || slot_sel_right5);
+wire slot_sel_horiz  = toolbar_selected_slot && (slot_sel_top || slot_sel_bottom);
+
+// --- Font ROM: 每个字母 3 列 x 5 行，用 wire 数组实现 ---
+// 字母定义（3x5 点阵）: 每行 3bit
+// W= 100010011111010, A= 000011101100111, L= 100100100100111, L= same
+// A= 同上, T= 111001001001001, E= 111100111100111, R= 111101111101101
+// S= 111100111001111, A, N= 101101111111111, N=, D= 110101101101110
+// F= 111100110100100, I= 111001101101111, R=, E=
+// S, M= 111111101111101011111, O= 011101001010011, K= 101110101110101
+
+// --- 简化方案：直接硬编码比较来绘制文字 ---
+// 对于每个 slot，判断当前像素是否处于对应字母的某个点亮位置
+// 文字区域：y=208..212 (5px高)
+// 每个 slot=64px宽，文字居中
+
+wire in_text_area_y = (grid_read_y[9:0] >= 10'd208 && grid_read_y[9:0] <= 10'd212);
+
+// --- SLOT 0: "WALL" (4 chars * 3px = 12px, 3 gaps = 15px) 居中：起点 x=24 ---
+wire t0_y0 = in_text_area_y && (grid_read_y[9:0] == 10'd208); // row 0
+wire t0_y1 = in_text_area_y && (grid_read_y[9:0] == 10'd209); // row 1
+wire t0_y2 = in_text_area_y && (grid_read_y[9:0] == 10'd210); // row 2
+wire t0_y3 = in_text_area_y && (grid_read_y[9:0] == 10'd211); // row 3
+wire t0_y4 = in_text_area_y && (grid_read_y[9:0] == 10'd212); // row 4
+
+// WALL 点阵: W(101/101/111/111/110) A(010/101/111/101/101) L(100/100/100/100/111) L(same)
+wire t0_pixel =
+  // W at x=24..26:
+  ( (grid_read_x[8:0] == 9'd24 || grid_read_x[8:0] == 9'd26) && t0_y0 ) |
+  ( (grid_read_x[8:0] == 9'd24 || grid_read_x[8:0] == 9'd26) && t0_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd24 && grid_read_x[8:0] <= 9'd26) && t0_y2 ) |
+  ( (grid_read_x[8:0] >= 9'd24 && grid_read_x[8:0] <= 9'd26) && t0_y3 ) |
+  ( (grid_read_x[8:0] == 9'd24 || grid_read_x[8:0] == 9'd25) && t0_y4 ) |
+  // A at x=28..30:
+  ( (grid_read_x[8:0] == 9'd29) && t0_y0 ) |
+  ( (grid_read_x[8:0] == 9'd28 || grid_read_x[8:0] == 9'd30) && t0_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd28 && grid_read_x[8:0] <= 9'd30) && t0_y2 ) |
+  ( (grid_read_x[8:0] == 9'd28 || grid_read_x[8:0] == 9'd30) && t0_y3 ) |
+  ( (grid_read_x[8:0] == 9'd28 || grid_read_x[8:0] == 9'd30) && t0_y4 ) |
+  // L at x=32..34:
+  ( (grid_read_x[8:0] == 9'd32) && t0_y0 ) |
+  ( (grid_read_x[8:0] == 9'd32) && t0_y1 ) |
+  ( (grid_read_x[8:0] == 9'd32) && t0_y2 ) |
+  ( (grid_read_x[8:0] == 9'd32) && t0_y3 ) |
+  ( (grid_read_x[8:0] >= 9'd32 && grid_read_x[8:0] <= 9'd34) && t0_y4 ) |
+  // L at x=36..38:
+  ( (grid_read_x[8:0] == 9'd36) && t0_y0 ) |
+  ( (grid_read_x[8:0] == 9'd36) && t0_y1 ) |
+  ( (grid_read_x[8:0] == 9'd36) && t0_y2 ) |
+  ( (grid_read_x[8:0] == 9'd36) && t0_y3 ) |
+  ( (grid_read_x[8:0] >= 9'd36 && grid_read_x[8:0] <= 9'd38) && t0_y4 )
+;
+
+// --- SLOT 1: "WATER" (5chars) 起点 x=23 (居中于0..63) ---
+// x: W=23-25, 空=26, A=27-29, 空=30, T=31-33, 空=34, E=35-37, 空=38, R=39-41
+wire t1_y0 = in_text_area_y && (grid_read_y[9:0] == 10'd208);
+wire t1_y1 = in_text_area_y && (grid_read_y[9:0] == 10'd209);
+wire t1_y2 = in_text_area_y && (grid_read_y[9:0] == 10'd210);
+wire t1_y3 = in_text_area_y && (grid_read_y[9:0] == 10'd211);
+wire t1_y4 = in_text_area_y && (grid_read_y[9:0] == 10'd212);
+
+wire t1_pixel =
+  // W at 23-25:
+  ( (grid_read_x[8:0] == 9'd23 || grid_read_x[8:0] == 9'd25) && t1_y0 ) |
+  ( (grid_read_x[8:0] == 9'd23 || grid_read_x[8:0] == 9'd25) && t1_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd23 && grid_read_x[8:0] <= 9'd25) && t1_y2 ) |
+  ( (grid_read_x[8:0] >= 9'd23 && grid_read_x[8:0] <= 9'd25) && t1_y3 ) |
+  ( (grid_read_x[8:0] == 9'd23 || grid_read_x[8:0] == 9'd24) && t1_y4 ) |
+  // A at 27-29:
+  ( (grid_read_x[8:0] == 9'd28) && t1_y0 ) |
+  ( (grid_read_x[8:0] == 9'd27 || grid_read_x[8:0] == 9'd29) && t1_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd27 && grid_read_x[8:0] <= 9'd29) && t1_y2 ) |
+  ( (grid_read_x[8:0] == 9'd27 || grid_read_x[8:0] == 9'd29) && t1_y3 ) |
+  ( (grid_read_x[8:0] == 9'd27 || grid_read_x[8:0] == 9'd29) && t1_y4 ) |
+  // T at 31-33:
+  ( (grid_read_x[8:0] >= 9'd31 && grid_read_x[8:0] <= 9'd33) && t1_y0 ) |
+  ( (grid_read_x[8:0] == 9'd32) && t1_y1 ) |
+  ( (grid_read_x[8:0] == 9'd32) && t1_y2 ) |
+  ( (grid_read_x[8:0] == 9'd32) && t1_y3 ) |
+  ( (grid_read_x[8:0] == 9'd32) && t1_y4 ) |
+  // E at 35-37:
+  ( (grid_read_x[8:0] >= 9'd35 && grid_read_x[8:0] <= 9'd37) && t1_y0 ) |
+  ( (grid_read_x[8:0] == 9'd35) && t1_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd35 && grid_read_x[8:0] <= 9'd36) && t1_y2 ) |
+  ( (grid_read_x[8:0] == 9'd35) && t1_y3 ) |
+  ( (grid_read_x[8:0] >= 9'd35 && grid_read_x[8:0] <= 9'd37) && t1_y4 ) |
+  // R at 39-41:
+  ( (grid_read_x[8:0] >= 9'd39 && grid_read_x[8:0] <= 9'd41) && t1_y0 ) |
+  ( (grid_read_x[8:0] == 9'd39 || grid_read_x[8:0] == 9'd40) && t1_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd39 && grid_read_x[8:0] <= 9'd41) && t1_y2 ) |
+  ( (grid_read_x[8:0] == 9'd39 || grid_read_x[8:0] == 9'd40) && t1_y3 ) |
+  ( (grid_read_x[8:0] == 9'd39 || grid_read_x[8:0] == 9'd41) && t1_y4 )
+;
+
+// --- SLOT 2: "SAND" (4chars) 起点x=24 (64宽中置12+3空格=15: (64-15)/2=24.5->24) ---
+wire t2_y0 = in_text_area_y && (grid_read_y[9:0] == 10'd208);
+wire t2_y1 = in_text_area_y && (grid_read_y[9:0] == 10'd209);
+wire t2_y2 = in_text_area_y && (grid_read_y[9:0] == 10'd210);
+wire t2_y3 = in_text_area_y && (grid_read_y[9:0] == 10'd211);
+wire t2_y4 = in_text_area_y && (grid_read_y[9:0] == 10'd212);
+
+wire t2_pixel =
+  // S at 124-126 (slot 2 x range 128..191, S starts at 128+24-128=24... no, slot2 is x=128..191, offset 24 means x=152)
+  // WAIT -- 文字在 SLOT 内部居中！slot2 的 x 范围是 128..191（64宽），所以文字从 128+24=152 开始
+  // S at x=152..154:
+  ( (grid_read_x[8:0] >= 9'd152 && grid_read_x[8:0] <= 9'd154) && t2_y0 ) |
+  ( (grid_read_x[8:0] == 9'd152) && t2_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd152 && grid_read_x[8:0] <= 9'd153) && t2_y2 ) |
+  ( (grid_read_x[8:0] == 9'd154) && t2_y3 ) |
+  ( (grid_read_x[8:0] >= 9'd152 && grid_read_x[8:0] <= 9'd154) && t2_y4 ) |
+  // A at x=156..158:
+  ( (grid_read_x[8:0] == 9'd157) && t2_y0 ) |
+  ( (grid_read_x[8:0] == 9'd156 || grid_read_x[8:0] == 9'd158) && t2_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd156 && grid_read_x[8:0] <= 9'd158) && t2_y2 ) |
+  ( (grid_read_x[8:0] == 9'd156 || grid_read_x[8:0] == 9'd158) && t2_y3 ) |
+  ( (grid_read_x[8:0] == 9'd156 || grid_read_x[8:0] == 9'd158) && t2_y4 ) |
+  // N at x=160..162:
+  ( (grid_read_x[8:0] == 9'd160 || grid_read_x[8:0] == 9'd162) && t2_y0 ) |
+  ( (grid_read_x[8:0] == 9'd160 || grid_read_x[8:0] == 9'd161 || grid_read_x[8:0] == 9'd162) && t2_y1 ) |
+  ( (grid_read_x[8:0] == 9'd160 || grid_read_x[8:0] == 9'd161 || grid_read_x[8:0] == 9'd162) && t2_y2 ) |
+  ( (grid_read_x[8:0] == 9'd160 || grid_read_x[8:0] == 9'd161 || grid_read_x[8:0] == 9'd162) && t2_y3 ) |
+  ( (grid_read_x[8:0] == 9'd160 || grid_read_x[8:0] == 9'd162) && t2_y4 ) |
+  // D at x=164..166:
+  ( (grid_read_x[8:0] >= 9'd164 && grid_read_x[8:0] <= 9'd165) && t2_y0 ) |
+  ( (grid_read_x[8:0] == 9'd164 || grid_read_x[8:0] == 9'd165) && t2_y1 ) |
+  ( (grid_read_x[8:0] == 9'd164 || grid_read_x[8:0] == 9'd165) && t2_y2 ) |
+  ( (grid_read_x[8:0] == 9'd164 || grid_read_x[8:0] == 9'd165) && t2_y3 ) |
+  ( (grid_read_x[8:0] >= 9'd164 && grid_read_x[8:0] <= 9'd165) && t2_y4 )
+;
+
+// --- SLOT 3: "FIRE" (4chars) x range 192..255, text starts 192+24=216 ---
+wire t3_y0 = in_text_area_y && (grid_read_y[9:0] == 10'd208);
+wire t3_y1 = in_text_area_y && (grid_read_y[9:0] == 10'd209);
+wire t3_y2 = in_text_area_y && (grid_read_y[9:0] == 10'd210);
+wire t3_y3 = in_text_area_y && (grid_read_y[9:0] == 10'd211);
+wire t3_y4 = in_text_area_y && (grid_read_y[9:0] == 10'd212);
+
+wire t3_pixel =
+  // F at x=216..218:
+  ( (grid_read_x[8:0] >= 9'd216 && grid_read_x[8:0] <= 9'd218) && t3_y0 ) |
+  ( (grid_read_x[8:0] == 9'd216) && t3_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd216 && grid_read_x[8:0] <= 9'd217) && t3_y2 ) |
+  ( (grid_read_x[8:0] == 9'd216) && t3_y3 ) |
+  ( (grid_read_x[8:0] == 9'd216) && t3_y4 ) |
+  // I at x=220..222:
+  ( (grid_read_x[8:0] >= 9'd220 && grid_read_x[8:0] <= 9'd222) && t3_y0 ) |
+  ( (grid_read_x[8:0] == 9'd221) && t3_y1 ) |
+  ( (grid_read_x[8:0] == 9'd221) && t3_y2 ) |
+  ( (grid_read_x[8:0] == 9'd221) && t3_y3 ) |
+  ( (grid_read_x[8:0] >= 9'd220 && grid_read_x[8:0] <= 9'd222) && t3_y4 ) |
+  // R at x=224..226:
+  ( (grid_read_x[8:0] >= 9'd224 && grid_read_x[8:0] <= 9'd226) && t3_y0 ) |
+  ( (grid_read_x[8:0] == 9'd224 || grid_read_x[8:0] == 9'd225) && t3_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd224 && grid_read_x[8:0] <= 9'd226) && t3_y2 ) |
+  ( (grid_read_x[8:0] == 9'd224 || grid_read_x[8:0] == 9'd225) && t3_y3 ) |
+  ( (grid_read_x[8:0] == 9'd224 || grid_read_x[8:0] == 9'd226) && t3_y4 ) |
+  // E at x=228..230:
+  ( (grid_read_x[8:0] >= 9'd228 && grid_read_x[8:0] <= 9'd230) && t3_y0 ) |
+  ( (grid_read_x[8:0] == 9'd228) && t3_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd228 && grid_read_x[8:0] <= 9'd229) && t3_y2 ) |
+  ( (grid_read_x[8:0] == 9'd228) && t3_y3 ) |
+  ( (grid_read_x[8:0] >= 9'd228 && grid_read_x[8:0] <= 9'd230) && t3_y4 )
+;
+
+// --- SLOT 4: "SMOKE" (5chars) x range 256..319, text starts 256+23=279 ---
+wire t4_y0 = in_text_area_y && (grid_read_y[9:0] == 10'd208);
+wire t4_y1 = in_text_area_y && (grid_read_y[9:0] == 10'd209);
+wire t4_y2 = in_text_area_y && (grid_read_y[9:0] == 10'd210);
+wire t4_y3 = in_text_area_y && (grid_read_y[9:0] == 10'd211);
+wire t4_y4 = in_text_area_y && (grid_read_y[9:0] == 10'd212);
+
+wire t4_pixel =
+  // S at x=279..281:
+  ( (grid_read_x[8:0] >= 9'd279 && grid_read_x[8:0] <= 9'd281) && t4_y0 ) |
+  ( (grid_read_x[8:0] == 9'd279) && t4_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd279 && grid_read_x[8:0] <= 9'd280) && t4_y2 ) |
+  ( (grid_read_x[8:0] == 9'd281) && t4_y3 ) |
+  ( (grid_read_x[8:0] >= 9'd279 && grid_read_x[8:0] <= 9'd281) && t4_y4 ) |
+  // M at x=283..285:
+  ( (grid_read_x[8:0] == 9'd283 || grid_read_x[8:0] == 9'd284 || grid_read_x[8:0] == 9'd285) && t4_y0 ) |
+  ( (grid_read_x[8:0] == 9'd283) && t4_y1 ) |
+  ( (grid_read_x[8:0] == 9'd283 || grid_read_x[8:0] == 9'd284) && t4_y2 ) |
+  ( (grid_read_x[8:0] == 9'd283) && t4_y3 ) |
+  ( (grid_read_x[8:0] == 9'd283 || grid_read_x[8:0] == 9'd285) && t4_y4 ) |
+  // O at x=287..289:
+  ( (grid_read_x[8:0] >= 9'd287 && grid_read_x[8:0] <= 9'd289) && t4_y0 ) |
+  ( (grid_read_x[8:0] == 9'd287 || grid_read_x[8:0] == 9'd289) && t4_y1 ) |
+  ( (grid_read_x[8:0] == 9'd287 || grid_read_x[8:0] == 9'd289) && t4_y2 ) |
+  ( (grid_read_x[8:0] == 9'd287 || grid_read_x[8:0] == 9'd289) && t4_y3 ) |
+  ( (grid_read_x[8:0] >= 9'd287 && grid_read_x[8:0] <= 9'd289) && t4_y4 ) |
+  // K at x=291..293:
+  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd293) && t4_y0 ) |
+  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd292) && t4_y1 ) |
+  ( (grid_read_x[8:0] == 9'd291) && t4_y2 ) |
+  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd292) && t4_y3 ) |
+  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd293) && t4_y4 ) |
+  // E at x=295..297:
+  ( (grid_read_x[8:0] >= 9'd295 && grid_read_x[8:0] <= 9'd297) && t4_y0 ) |
+  ( (grid_read_x[8:0] == 9'd295) && t4_y1 ) |
+  ( (grid_read_x[8:0] >= 9'd295 && grid_read_x[8:0] <= 9'd296) && t4_y2 ) |
+  ( (grid_read_x[8:0] == 9'd295) && t4_y3 ) |
+  ( (grid_read_x[8:0] >= 9'd295 && grid_read_x[8:0] <= 9'd297) && t4_y4 )
+;
+
+// Slot text color based on slot's original material color
+wire [7:0] slot0_text_color = 8'b011_011_01; // Wall - gray
+wire [7:0] slot1_text_color = 8'b000_010_11; // Water - blue
+wire [7:0] slot2_text_color = 8'b111_110_00; // Sand - yellow
+wire [7:0] slot3_text_color = 8'b111_100_00; // Fire - orange
+wire [7:0] slot4_text_color = 8'b010_010_00; // Smoke - dark gray
+
+// Final pixel-on-text signal
+wire any_text_pixel = (in_toolbar && toolbar_slot == 2'd0 && in_text_area_y && t0_pixel) ||
+                      (in_toolbar && toolbar_slot == 2'd1 && in_text_area_y && t1_pixel) ||
+                      (in_toolbar && toolbar_slot == 2'd2 && in_text_area_y && t2_pixel) ||
+                      (in_toolbar && toolbar_slot == 2'd3 && in_text_area_y && t3_pixel) ||
+                      (in_toolbar && toolbar_slot == 2'd4 && in_text_area_y && t4_pixel);
+
+// --- Toolbar text color mux ---
+wire [7:0] text_color = (toolbar_slot == 2'd0) ? slot0_text_color :
+                        (toolbar_slot == 2'd1) ? slot1_text_color :
+                        (toolbar_slot == 2'd2) ? slot2_text_color :
+                        (toolbar_slot == 2'd3) ? slot3_text_color :
+                                                  slot4_text_color;
+
 reg [7:0] toolbar_color;
 always @(*) begin
-    // Default toolbar background: dark reddish-brown
-    toolbar_color = 8'b101_001_10; // ~R:165,G:62,B:50 approximated
+    // Default: unified dark bg
+    toolbar_color = toolbar_bg;
 
-    // Selected slot highlight
-    if (toolbar_border && toolbar_selected_slot)
-        toolbar_color = 8'b111_111_11; // White border for selected
-    else if (toolbar_border)
-        toolbar_color = 8'b010_010_01; // Darker border for non-selected
+    // Top bar above toolbar (y=198..199)
+    if (toolbar_top_bar)
+        toolbar_color = 8'b111_111_11; // White top border
+    else if (toolbar_bottom_bar)
+        toolbar_color = 8'b000_000_00; // Black bottom border
+    else if (toolbar_divider)
+        toolbar_color = 8'b010_010_01; // Divider same as bg
+    else if (slot_sel_horiz || slot_sel_vert)
+        toolbar_color = 8'b111_111_11; // White selection border
+    else if (any_text_pixel)
+        toolbar_color = text_color; // Text pixel in slot
+    // else: dark bg
+end
 
-    // Icon representation per slot
-    if (in_toolbar && !toolbar_border) begin
-        case (toolbar_slot)
-            2'd0: toolbar_color = 8'b011_011_01; // Wall - gray
-            2'd1: toolbar_color = 8'b000_010_11; // Water - blue
-            2'd2: toolbar_color = 8'b111_110_00; // Sand - yellow
-            2'd3: toolbar_color = 8'b111_000_00; // Fire - red
-            2'd4: toolbar_color = 8'b100_100_10; // Smoke - gray
-        endcase
-
-        // Add a lighter top/bottom stripe for visual flair
-        if (grid_read_y[8:0] == 9'd202 || grid_read_y[8:0] == 9'd237)
-            toolbar_color = 8'b100_010_01; // Highlight stripe
+// Fire block color - average color across all active blocks
+reg [7:0] fire_color;
+always @(*) begin
+    if (is_ember_pixel) begin
+        fire_color = visual_anim_ctr[0] ? 8'b111_100_00 : 8'b111_011_00;
+    end else if (is_flame_pixel) begin
+        // Use a representative row for coloring (from first matching block)
+        fire_color = visual_anim_ctr[1] ? 8'b111_011_00 : 8'b111_000_00;
+    end else begin
+        fire_color = 8'b000_000_00;
     end
 end
+
 // Cursor color
 reg [7:0] cursor_color;
 always @(*) begin
@@ -504,6 +951,8 @@ always @(*) begin
     final_vga_color = grid_color; // Default: grid material
     if (in_toolbar)
         final_vga_color = toolbar_color;
+    if (in_fire_block && (is_flame_pixel | is_ember_pixel))
+        final_vga_color = fire_color;
     if (cursor_center | cursor_ring)
         final_vga_color = cursor_color; // Cursor on top
     // Pause indicator (Feature 4): bright white bars on top of everything when paused
@@ -592,6 +1041,9 @@ reg [9:0]  cx;
 reg [9:0]  cy;
 reg [3:0]  current_mat;
 reg        diag_side;
+reg        water_moving;       // 标记水已确认要移动，下一拍写邻居
+reg [16:0] water_target_addr;  // 水要移动到的目标地址
+reg        water_priority_open; // 为 true 时优先侧为空，已在 target_addr 中记录
 
 // VSync falling edge detection
 reg prev_vsync;
@@ -608,6 +1060,9 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
         cy                <= 10'd0;
         current_mat       <= MAT_EMPTY;
         diag_side         <= 1'b0;
+        water_moving       <= 1'b0;
+        water_target_addr  <= 17'd0;
+        water_priority_open <= 1'b0;
     end else begin
         prev_vsync <= VGA_VS;
         ca_we      <= 1'b0; // default: no write this cycle
@@ -806,23 +1261,23 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end else begin
                         // -----------------------------------------------
                         // 水：下方被阻挡
-                        // 步骤1：立即写回自身，确保水不消失
-                        // 步骤2：同时发出横向邻居读请求（读前台=上一帧状态）
-                        //        diag_side=0 优先读左，diag_side=1 优先读右
+                        // 在双缓冲区模式下，后台已被清零，我们只需要：
+                        // - 能移动到邻居时：在 SIDE x EV 中写水到邻居（自身不写 = 后台清空）
+                        // - 两侧都阻塞时：在 SIDE x EV 中写水回原位
+                        // 注意：绝对不在这里写自己，否则会造成无限扩散！
                         // -----------------------------------------------
-                        ca_we         <= 1'b1;
-                        ca_write_addr <= (cy * GRID_WIDTH) + cx; // 先保住自己
-                        ca_write_data <= MAT_WATER;
-
                         if (cx == 10'd0 && cx == GRID_WIDTH - 10'd1) begin
-                            // 宽度为1，无处可去，直接结束
-                            state <= S_NEXT_PIXEL;
+                            // 宽度为1，无处可去
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_WATER;
+                            state         <= S_NEXT_PIXEL;
                         end else if (diag_side == 1'b0) begin
                             // 优先尝试左
                             if (cx == 10'd0) begin
                                 // 左边界，直接跳去读右
                                 ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
-                                state        <= S_CHK_SIDE2_WT; // 用side2作为"唯一尝试"
+                                state        <= S_CHK_SIDE2_WT;
                             end else begin
                                 ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
                                 state        <= S_CHK_SIDE1_WT;
@@ -832,7 +1287,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                             if (cx == GRID_WIDTH - 10'd1) begin
                                 // 右边界，直接跳去读左
                                 ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
-                                state        <= S_CHK_SIDE2_WT; // 用side2作为"唯一尝试"
+                                state        <= S_CHK_SIDE2_WT;
                             end else begin
                                 ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
                                 state        <= S_CHK_SIDE1_WT;
@@ -920,16 +1375,24 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             // ----------------------------------------------------------
-            // 水横向扩散（方案B：简化模式，水移动后自身体由 S_CLEAR 清零）
+            // 水横向扩散（方案一：读前台上一帧状态，延迟一帧）
+            //
+            // 进入前提（来自 S_CHK_BOT_EV）：
+            //   - 水下方被阻
+            //   - 自身已写回后台：back[(cy,cx)] = WATER
+            //   - ca_read_addr 已设置为优先侧邻居地址
+            //   - water_moving = 0
             //
             // 流程：
             //   SIDE1_WT/EV：读优先侧前台邻居
-            //     若空：直接写 WATER 到优先侧，结束（自身后台已由 S_CLEAR 清零）
+            //     若空：把自身后台改为 EMPTY，记录目标，water_moving=1，进 SIDE2_WT/EV 写邻居
             //     若非空：读另一侧，进 SIDE2_WT/EV 继续判断
             //
-            //   SIDE2_WT/EV：读备选侧前台邻居
-            //     若空：直接写 WATER 到备选侧，结束
-            //     若非空：两侧都堵，写 WATER 回原地
+            //   SIDE2_WT/EV：
+            //     若 water_moving=1：写 WATER 到 water_target_addr，结束
+            //     若 water_moving=0：读另一侧前台邻居
+            //       若空：把自身后台改为 EMPTY，记录目标，water_moving=1，再循环一次 SIDE2
+            //       若非空：两侧都堵，自身已保留，结束
             // ----------------------------------------------------------
             S_CHK_SIDE1_WT: begin
                 state <= S_CHK_SIDE1_EV;
@@ -939,23 +1402,23 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                 if (ca_read_data == MAT_EMPTY ||
                     ca_read_data == MAT_SMOKE ||
                     ca_read_data == MAT_FIRE) begin
-                    // 优先侧为空：直接水写到优先侧
-                    ca_we         <= 1'b1;
-                    ca_write_addr <= (diag_side == 1'b0)
-                                     ? (cy * GRID_WIDTH) + (cx - 10'd1)
-                                     : (cy * GRID_WIDTH) + (cx + 10'd1);
-                    ca_write_data <= MAT_WATER;
-                    state         <= S_NEXT_PIXEL;
+                    // 优先侧为空：记录移动目标
+                    water_target_addr <= (diag_side == 1'b0)
+                                        ? (cy * GRID_WIDTH) + (cx - 10'd1)
+                                        : (cy * GRID_WIDTH) + (cx + 10'd1);
+                    water_moving      <= 1'b1;
+                    water_priority_open <= 1'b1;
+                    state             <= S_CHK_SIDE2_WT;
                 end else begin
                     // 优先侧被阻，发出另一侧读请求
                     if (diag_side == 1'b0) begin
                         // 优先左失败 → 读右
                         if (cx == GRID_WIDTH - 10'd1) begin
-                            // 右边界，无处可去，原地保留
+                            // 两侧都不行，原位不写=清空，需要写回来
                             ca_we         <= 1'b1;
                             ca_write_addr <= (cy * GRID_WIDTH) + cx;
                             ca_write_data <= MAT_WATER;
-                            state         <= S_NEXT_PIXEL;
+                            state <= S_NEXT_PIXEL;
                         end else begin
                             ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
                             state        <= S_CHK_SIDE2_WT;
@@ -963,11 +1426,11 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end else begin
                         // 优先右失败 → 读左
                         if (cx == 10'd0) begin
-                            // 左边界，无处可去，原地保留
+                            // 两侧都不行，原位写回来
                             ca_we         <= 1'b1;
                             ca_write_addr <= (cy * GRID_WIDTH) + cx;
                             ca_write_data <= MAT_WATER;
-                            state         <= S_NEXT_PIXEL;
+                            state <= S_NEXT_PIXEL;
                         end else begin
                             ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
                             state        <= S_CHK_SIDE2_WT;
@@ -981,22 +1444,34 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             S_CHK_SIDE2_EV: begin
-                if (ca_read_data == MAT_EMPTY ||
-                    ca_read_data == MAT_SMOKE ||
-                    ca_read_data == MAT_FIRE) begin
-                    // 备选侧为空：直接水写到备选侧
+                if (water_moving) begin
+                    // 已确认移动：把水写到目标邻居格
                     ca_we         <= 1'b1;
-                    ca_write_addr <= (diag_side == 1'b0)
-                                     ? (cy * GRID_WIDTH) + (cx + 10'd1)
-                                     : (cy * GRID_WIDTH) + (cx - 10'd1);
+                    ca_write_addr <= water_target_addr;
                     ca_write_data <= MAT_WATER;
+                    water_moving  <= 1'b0;
+                    if (water_priority_open) begin
+                        water_priority_open <= 1'b0;
+                    end
                     state         <= S_NEXT_PIXEL;
                 end else begin
-                    // 两侧都堵，原地保留
-                    ca_we         <= 1'b1;
-                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                    ca_write_data <= MAT_WATER;
-                    state         <= S_NEXT_PIXEL;
+                    // 读另一侧（备选侧）的前台结果
+                    if (ca_read_data == MAT_EMPTY ||
+                        ca_read_data == MAT_SMOKE ||
+                        ca_read_data == MAT_FIRE) begin
+                        // 备选侧为空：记录目标，下一拍写邻居
+                        water_target_addr <= (diag_side == 1'b0)
+                                            ? (cy * GRID_WIDTH) + (cx + 10'd1) // 左失败→右
+                                            : (cy * GRID_WIDTH) + (cx - 10'd1); // 右失败→左
+                        water_moving      <= 1'b1;
+                        state             <= S_CHK_SIDE2_WT; // 再走一次 SIDE2 来写邻居
+                    end else begin
+                        // 两侧都堵，水不写=后台清空，必须写回来保留
+                        ca_we         <= 1'b1;
+                        ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                        ca_write_data <= MAT_WATER;
+                        state <= S_NEXT_PIXEL;
+                    end
                 end
             end
 
@@ -1208,10 +1683,13 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                                     : (cy * GRID_WIDTH) + (cx - 10'd1);
                     ca_write_data <= MAT_FIRE;
                 end else begin
-                    // Both sides blocked — burn in place
+                    // Both sides blocked — burn in place (register fire block root)
                     ca_we         <= 1'b1;
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
+                    fire_register_trigger <= 1'b1;
+                    fire_register_x       <= cx[8:0];
+                    fire_register_y       <= cy[8:0];
                 end
                 state <= S_NEXT_PIXEL;
             end

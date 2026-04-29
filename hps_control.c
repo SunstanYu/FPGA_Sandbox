@@ -115,6 +115,21 @@ int main(void)
 
 	fpga_set_brush_material((unsigned int)current_mat_idx);
 
+	// 启动时清空整个画布
+	printf(">>> INIT: Clearing canvas... ");
+	for (int cy = 0; cy < CANVAS_H; cy++) {
+		for (int cx = 0; cx < 320; cx++) {
+			*(brush_x_ptr)   = (unsigned int)cx;
+			*(brush_y_ptr)   = (unsigned int)cy;
+			*(brush_mat_ptr) = (unsigned int)MAT_EMPTY;
+			__sync_synchronize();
+			*(brush_we_ptr)  = 1;
+			(void)*(brush_we_ptr);
+			*(brush_we_ptr)  = 0;
+		}
+	}
+	printf("Done\n");
+
 	unsigned char mbuf[3];
 	int mouse_acc = 0;
 
