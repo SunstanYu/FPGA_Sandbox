@@ -592,8 +592,6 @@ reg [9:0]  cx;
 reg [9:0]  cy;
 reg [3:0]  current_mat;
 reg        diag_side;
-reg        water_moving;       // 标记水已确认要移动，下一拍写邻居
-reg [16:0] water_target_addr;  // 水要移动到的目标地址
 
 // VSync falling edge detection
 reg prev_vsync;
@@ -610,8 +608,6 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
         cy                <= 10'd0;
         current_mat       <= MAT_EMPTY;
         diag_side         <= 1'b0;
-        water_moving      <= 1'b0;
-        water_target_addr <= 17'd0;
     end else begin
         prev_vsync <= VGA_VS;
         ca_we      <= 1'b0; // default: no write this cycle
@@ -924,24 +920,16 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             // ----------------------------------------------------------
-            // 水横向扩散（方案一：读前台上一帧状态，延迟一帧）
-            //
-            // 进入前提（来自 S_CHK_BOT_EV）：
-            //   - 水下方被阻
-            //   - 自身已写回后台：back[(cy,cx)] = WATER
-            //   - ca_read_addr 已设置为优先侧邻居地址
-            //   - water_moving = 0
+            // 水横向扩散（方案B：简化模式，水移动后自身体由 S_CLEAR 清零）
             //
             // 流程：
             //   SIDE1_WT/EV：读优先侧前台邻居
-            //     若空：把自身后台改为 EMPTY，记录目标，water_moving=1，进 SIDE2_WT/EV 写邻居
+            //     若空：直接写 WATER 到优先侧，结束（自身后台已由 S_CLEAR 清零）
             //     若非空：读另一侧，进 SIDE2_WT/EV 继续判断
             //
-            //   SIDE2_WT/EV：
-            //     若 water_moving=1：写 WATER 到 water_target_addr，结束
-            //     若 water_moving=0：读另一侧前台邻居
-            //       若空：把自身后台改为 EMPTY，记录目标，water_moving=1，再循环一次 SIDE2
-            //       若非空：两侧都堵，自身已保留，结束
+            //   SIDE2_WT/EV：读备选侧前台邻居
+            //     若空：直接写 WATER 到备选侧，结束
+            //     若非空：两侧都堵，写 WATER 回原地
             // ----------------------------------------------------------
             S_CHK_SIDE1_WT: begin
                 state <= S_CHK_SIDE1_EV;
@@ -951,21 +939,23 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                 if (ca_read_data == MAT_EMPTY ||
                     ca_read_data == MAT_SMOKE ||
                     ca_read_data == MAT_FIRE) begin
-                    // 优先侧为空：撤销自身，记录目标，下一拍写邻居
-                    ca_we             <= 1'b1;
-                    ca_write_addr     <= (cy * GRID_WIDTH) + cx;
-                    ca_write_data     <= MAT_EMPTY;
-                    water_target_addr <= (diag_side == 1'b0)
-                                        ? (cy * GRID_WIDTH) + (cx - 10'd1)
-                                        : (cy * GRID_WIDTH) + (cx + 10'd1);
-                    water_moving      <= 1'b1;
-                    state             <= S_CHK_SIDE2_WT;
+                    // 优先侧为空：直接水写到优先侧
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                     ? (cy * GRID_WIDTH) + (cx - 10'd1)
+                                     : (cy * GRID_WIDTH) + (cx + 10'd1);
+                    ca_write_data <= MAT_WATER;
+                    state         <= S_NEXT_PIXEL;
                 end else begin
                     // 优先侧被阻，发出另一侧读请求
                     if (diag_side == 1'b0) begin
                         // 优先左失败 → 读右
                         if (cx == GRID_WIDTH - 10'd1) begin
-                            state <= S_NEXT_PIXEL; // 右边界，两侧都不行，自身已保留
+                            // 右边界，无处可去，原地保留
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_WATER;
+                            state         <= S_NEXT_PIXEL;
                         end else begin
                             ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
                             state        <= S_CHK_SIDE2_WT;
@@ -973,7 +963,11 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end else begin
                         // 优先右失败 → 读左
                         if (cx == 10'd0) begin
-                            state <= S_NEXT_PIXEL; // 左边界，自身已保留
+                            // 左边界，无处可去，原地保留
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_WATER;
+                            state         <= S_NEXT_PIXEL;
                         end else begin
                             ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
                             state        <= S_CHK_SIDE2_WT;
@@ -987,31 +981,22 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             S_CHK_SIDE2_EV: begin
-                if (water_moving) begin
-                    // 已确认移动：把水写到目标邻居格
+                if (ca_read_data == MAT_EMPTY ||
+                    ca_read_data == MAT_SMOKE ||
+                    ca_read_data == MAT_FIRE) begin
+                    // 备选侧为空：直接水写到备选侧
                     ca_we         <= 1'b1;
-                    ca_write_addr <= water_target_addr;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                     ? (cy * GRID_WIDTH) + (cx + 10'd1)
+                                     : (cy * GRID_WIDTH) + (cx - 10'd1);
                     ca_write_data <= MAT_WATER;
-                    water_moving  <= 1'b0;
                     state         <= S_NEXT_PIXEL;
                 end else begin
-                    // 读另一侧（备选侧）的前台结果
-                    if (ca_read_data == MAT_EMPTY ||
-                        ca_read_data == MAT_SMOKE ||
-                        ca_read_data == MAT_FIRE) begin
-                        // 备选侧为空：撤销自身，记录目标，下一拍写邻居
-                        ca_we             <= 1'b1;
-                        ca_write_addr     <= (cy * GRID_WIDTH) + cx;
-                        ca_write_data     <= MAT_EMPTY;
-                        water_target_addr <= (diag_side == 1'b0)
-                                            ? (cy * GRID_WIDTH) + (cx + 10'd1) // 左失败→右
-                                            : (cy * GRID_WIDTH) + (cx - 10'd1); // 右失败→左
-                        water_moving      <= 1'b1;
-                        state             <= S_CHK_SIDE2_WT; // 再走一次 SIDE2 来写邻居
-                    end else begin
-                        // 两侧都堵，自身已保留，结束
-                        state <= S_NEXT_PIXEL;
-                    end
+                    // 两侧都堵，原地保留
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_WATER;
+                    state         <= S_NEXT_PIXEL;
                 end
             end
 

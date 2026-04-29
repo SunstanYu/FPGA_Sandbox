@@ -167,6 +167,10 @@ int main(void)
 					if (my > 479) my = 479;
 				}
 
+				/* 光标实时跟踪：无论按键与否，总是输出当前鼠标位置到 FPGA */
+				*(brush_x_ptr) = (unsigned int)(mx / 2);
+				*(brush_y_ptr) = (unsigned int)(my / 2);
+
 				if (right && !prev_right) {
 					current_mat_idx++;
 					if (current_mat_idx > 5)
