@@ -395,8 +395,8 @@ assign toolbar_slot = grid_read_x[8:1] >> 6; // 0..4
 wire toolbar_left_border  = (grid_read_x[8:0] == 9'd0) || (grid_read_x[8:0] == 9'd64) || 
                              (grid_read_x[8:0] == 9'd128) || (grid_read_x[8:0] == 9'd192) || 
                              (grid_read_x[8:0] == 9'd256) || (grid_read_x[8:0] == 9'd319);
-wire toolbar_top_border    = (grid_read_y[9:0] == 10'd200);
-wire toolbar_bottom_border = (grid_read_y[9:0] == 10'd239);
+wire toolbar_top_border    = (grid_read_y[8:0] == 9'd200);
+wire toolbar_bottom_border = (grid_read_y[8:0] == 9'd239);
 wire toolbar_border        = toolbar_left_border | toolbar_top_border | toolbar_bottom_border;
 
 wire toolbar_selected_slot;
