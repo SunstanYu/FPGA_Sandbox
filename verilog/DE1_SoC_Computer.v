@@ -208,6 +208,11 @@ parameter GRID_HEIGHT = 10'd240;
 parameter CANVAS_ROWS = 10'd200; // Canvas area (y=0..199, toolbar is y=200..239)
 parameter MAX_CELLS   = 17'd76800; // 320 * 240
 
+// Fire block parameters
+parameter FIRE_BLOCK_WIDTH  = 9'd16; // 16 pixels wide (-8 to +7 from root)
+parameter FIRE_BLOCK_HEIGHT = 9'd12; // 12 pixels tall (rows -11..0 from root)
+parameter MAX_FIRE_BLOCKS   = 4'd16;
+
 // Material Definitions
 parameter MAT_EMPTY = 4'd0;
 parameter MAT_SAND  = 4'd1;
@@ -361,6 +366,75 @@ assign vga_data_out = (active_buffer == 1'b0) ? vga_q_A : vga_q_B;
 assign ca_read_data = (active_buffer == 1'b0) ? ca_q_A : ca_q_B;
 
 //=======================================================
+// Feature 1: Fire Block Visualization
+// Up to 16 fire blocks tracked. Each renders as 16w x 12h animated flame
+// around a registered root position (X,Y at bottom-center of block).
+//
+// Registration: fire_register_trigger is pulsed from the CA state machine
+// when fire falls and lands on/above sand/wall/fire surface.
+// If already within 16px of an existing block root, skip.
+// Deactivation: when brush writes non-fire to a root cell.
+//=======================================================
+reg  [8:0] fire_root_x     [0:15];
+reg  [8:0] fire_root_y     [0:15];
+reg        fire_root_active[0:15];
+reg        fire_register_trigger;
+reg  [8:0] fire_register_x;
+reg  [8:0] fire_register_y;
+
+// Fire block register + deactivate on brush write
+always @(posedge M10k_pll or negedge sys_reset_n) begin
+    integer i, k;
+    if (!sys_reset_n) begin
+        for (i = 0; i < 16; i = i + 1) begin
+            fire_root_x[i]     <= 9'd0;
+            fire_root_y[i]     <= 9'd0;
+            fire_root_active[i] <= 1'b0;
+        end
+        fire_register_trigger <= 1'b0;
+        fire_register_x       <= 9'd0;
+        fire_register_y       <= 9'd0;
+    end else begin
+        // Deactivate blocks whose root cell is overwritten by brush
+        if (brush_we_edge && brush_data_sync != MAT_FIRE) begin
+            for (k = 0; k < 16; k = k + 1) begin
+                if (fire_root_active[k] &&
+                    brush_addr_sync[16:0] == ((fire_root_y[k] * GRID_WIDTH) + fire_root_x[k]))
+                    fire_root_active[k] <= 1'b0;
+            end
+        end
+
+        // Register from trigger pulse
+        if (fire_register_trigger) begin
+            fire_register_trigger <= 1'b0;
+
+            // Overlap guard: skip if within 16px of existing root on same row
+            if (1) begin
+                integer skip;
+                skip = 0;
+                for (k = 0; k < 16; k = k + 1) begin
+                    if (fire_root_active[k] &&
+                        $signed(fire_register_y) == $signed(fire_root_y[k]) &&
+                        $signed(fire_register_x) >= $signed(fire_root_x[k]) - 9'd16 &&
+                        $signed(fire_register_x) <= $signed(fire_root_x[k]) + 9'd15)
+                        skip = 1;
+                end
+                if (!skip) begin
+                    integer slot;
+                    slot = 16;
+                    for (k = 0; k < 16; k = k + 1)
+                        if (!fire_root_active[k]) begin slot = k; k = 16; end
+                    if (slot == 16) slot = 0;
+                    fire_root_x[slot]      <= fire_register_x;
+                    fire_root_y[slot]      <= fire_register_y;
+                    fire_root_active[slot] <= 1'b1;
+                end
+            end
+        end
+    end
+end
+
+//=======================================================
 // VGA Color Mapper
 //=======================================================
 // Fire and smoke animation is display-only; physics still stores only MAT_*.
@@ -377,21 +451,271 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
     end
 end
 
+// ============================================================
+// Flame Shape ROM (Feature 1)
+// 4 frames x 12 rows x 16 bits. Each row defines which columns
+// of the fire block have flame. Fire block is 16 wide, centered
+// on the root position (root is at the bottom center).
+// Rows 0-1 are ember base (bottom), rows 2-11 are flame.
+// ============================================================
+wire [15:0] flame_shape [0:47]; // 4 frames * 12 rows
+
+// Frame 0: baseline flame shape
+assign flame_shape[ 0] = 16'b00000000_00000000; // row 0 (top) — empty for frame 0
+assign flame_shape[ 1] = 16'b00000011_11000000; // row 1
+assign flame_shape[ 2] = 16'b00001111_11110000;
+assign flame_shape[ 3] = 16'b00111111_11111100;
+assign flame_shape[ 4] = 16'b01111111_11111110;
+assign flame_shape[ 5] = 16'b01111111_11111110;
+assign flame_shape[ 6] = 16'b11111111_11111111;
+assign flame_shape[ 7] = 16'b11111111_11111111;
+assign flame_shape[ 8] = 16'b11111111_11111111;
+assign flame_shape[ 9] = 16'b11111111_11111111;
+assign flame_shape[10] = 16'b11111111_11111111; // row 10 (base-1)
+assign flame_shape[11] = 16'b11111111_11111111; // row 11 (ember base)
+
+// Frame 1: shifted right by 1
+assign flame_shape[12+ 0] = 16'b00000011_11000000;
+assign flame_shape[12+ 1] = 16'b00001111_11110000;
+assign flame_shape[12+ 2] = 16'b00111111_11111100;
+assign flame_shape[12+ 3] = 16'b01111111_11111110;
+assign flame_shape[12+ 4] = 16'b11111111_11111111;
+assign flame_shape[12+ 5] = 16'b11111111_11111111;
+assign flame_shape[12+ 6] = 16'b11111111_11111111;
+assign flame_shape[12+ 7] = 16'b11111111_11111111;
+assign flame_shape[12+ 8] = 16'b11111111_11111111;
+assign flame_shape[12+ 9] = 16'b11111111_11111111;
+assign flame_shape[12+10] = 16'b11111111_11111111;
+assign flame_shape[12+11] = 16'b11111111_11111111;
+
+// Frame 2: shifted left by 1
+assign flame_shape[24+ 0] = 16'b00000001_11100000;
+assign flame_shape[24+ 1] = 16'b00001111_11100000;
+assign flame_shape[24+ 2] = 16'b00011111_11110000;
+assign flame_shape[24+ 3] = 16'b00111111_11111000;
+assign flame_shape[24+ 4] = 16'b01111111_11111100;
+assign flame_shape[24+ 5] = 16'b01111111_11111110;
+assign flame_shape[24+ 6] = 16'b11111111_11111110;
+assign flame_shape[24+ 7] = 16'b11111111_11111111;
+assign flame_shape[24+ 8] = 16'b11111111_11111111;
+assign flame_shape[24+ 9] = 16'b11111111_11111111;
+assign flame_shape[24+10] = 16'b11111111_11111111;
+assign flame_shape[24+11] = 16'b11111111_11111111;
+
+// Frame 3: centered + flicker top
+assign flame_shape[36+ 0] = 16'b00000000_01111000;
+assign flame_shape[36+ 1] = 16'b00000011_11110000;
+assign flame_shape[36+ 2] = 16'b00001111_11111000;
+assign flame_shape[36+ 3] = 16'b00111111_11111100;
+assign flame_shape[36+ 4] = 16'b01111111_11111110;
+assign flame_shape[36+ 5] = 16'b01111111_11111110;
+assign flame_shape[36+ 6] = 16'b11111111_11111111;
+assign flame_shape[36+ 7] = 16'b11111111_11111111;
+assign flame_shape[36+ 8] = 16'b11111111_11111111;
+assign flame_shape[36+ 9] = 16'b11111111_11111111;
+assign flame_shape[36+10] = 16'b11111111_11111111;
+assign flame_shape[36+11] = 16'b11111111_11111111;
+
+// ============================================================
+// Fire block lookup signals
+// ============================================================
+wire        in_fire_block;
+wire        is_flame_pixel;
+wire        is_ember_pixel;
+
+// For each block, compute range check and shape match.
+// OR all block results together.
+generate
+    genvar fb_i;
+    wire [15:0] fb_in_block;  // per-block: pixel in fire block bounds
+    wire [15:0] fb_flame;     // per-block: pixel should be flame
+    wire [15:0] fb_ember;     // per-block: pixel should be ember
+    for (fb_i = 0; fb_i < 16; fb_i = fb_i + 1) begin : fb_lookup
+        
+        // Range check: within 16 wide, 12 tall around root
+        wire in_x = ($signed(grid_read_x) >= ($signed(fire_root_x[fb_i]) - 9'd8)) &&
+                     ($signed(grid_read_x) <= ($signed(fire_root_x[fb_i]) + 9'd7));
+        wire in_y = ($signed(grid_read_y) >= ($signed(fire_root_y[fb_i]) - 9'd11)) &&
+                     ($signed(grid_read_y) <= ($signed(fire_root_y[fb_i])));
+        wire fb_active = fire_root_active[fb_i] && in_x && in_y;
+        
+        // Row offset: 0=bottom/ember (root_y), 11=top of flame (root_y-11)
+        // But our ROM rows are 0=top, 11=ember, so we need to invert:
+        // rom_row = 11 - block_row
+        wire [3:0] block_row_inv;
+        assign block_row_inv = 4'd11 - (fire_root_y[fb_i] - grid_read_y);
+        
+        // Col offset: 0=left (root_x-8), 15=right (root_x+7)
+        wire [3:0] block_col;
+        assign block_col = grid_read_x - fire_root_x[fb_i] + 9'd8;
+        
+        // Flame shape lookup: 4 frames * 12 rows = 48 entries
+        wire [5:0] shape_addr;
+        assign shape_addr = {visual_anim_ctr[1:0], block_row_inv};
+        wire [15:0] shape_row;
+        assign shape_row = flame_shape[shape_addr];
+        
+        // Flame rows: 0-9, ember rows: 10-11
+        assign fb_in_block[fb_i] = fb_active;
+        assign fb_flame[fb_i] = fb_active && (block_row_inv < 4'd10) && shape_row[block_col];
+        assign fb_ember[fb_i] = fb_active && (block_row_inv >= 4'd10) && (block_row_inv <= 4'd11);
+    end
+endgenerate
+
+assign in_fire_block = |fb_in_block;
+assign is_flame_pixel = |fb_flame;
+assign is_ember_pixel = |fb_ember;
+
+// ============================================================
+// Toolbar color signals (Feature 2)
+// ============================================================
+wire in_toolbar;
+assign in_toolbar = (grid_read_y >= 9'd200 && grid_read_y <= 9'd239);
+
+// Toolbar slot computation (5 slots of 64px each)
+wire [1:0] toolbar_slot;
+assign toolbar_slot = grid_read_x[9:1] / 5'd64; // 0..4
+
+// Toolbar border computation
+wire toolbar_left_border  = (grid_read_x[9:0] == 10'd0) || (grid_read_x[9:0] == 10'd64) || 
+                             (grid_read_x[9:0] == 10'd128) || (grid_read_x[9:0] == 10'd192) || 
+                             (grid_read_x[9:0] == 10'd256) || (grid_read_x[9:0] == 10'd319);
+wire toolbar_top_border    = (grid_read_y[9:0] == 10'd200);
+wire toolbar_bottom_border = (grid_read_y[9:0] == 10'd239);
+wire toolbar_border        = toolbar_left_border | toolbar_top_border | toolbar_bottom_border;
+
+wire toolbar_selected_slot;
+ // brush_mat maps: WALL=3->slot0, WATER=2->slot1, SAND=1->slot2, FIRE=4->slot3, SMOKE=5->slot4
+assign toolbar_selected_slot = (brush_mat == 4'd3 && toolbar_slot == 2'd0) ||
+                               (brush_mat == 4'd2 && toolbar_slot == 2'd1) ||
+                               (brush_mat == 4'd1 && toolbar_slot == 2'd2) ||
+                               (brush_mat == 4'd4 && toolbar_slot == 2'd3) ||
+                               (brush_mat == 4'd5 && toolbar_slot == 2'd4);
+
+// Toolbar pixel font / icon for each slot (5x3 mini-icon per slot)
+// Using simple colored bars and a dot pattern approach
+wire [2:0] icon_x = grid_read_x[2:0]; // pixel within icon area
+wire [2:0] icon_y = grid_read_y[2:0] - 3'd0; // relative y in toolbar area
+
+// ============================================================
+// Mouse cursor (Feature 3)
+// ============================================================
+wire cursor_center;
+wire cursor_ring;
+assign cursor_center = (grid_read_x[8:0] == brush_x[8:0]) & (grid_read_y[8:0] == brush_y[8:0]);
+assign cursor_ring   = ((grid_read_x[8:0] == brush_x[8:0]) & (
+    (grid_read_y[8:0] == brush_y[8:0] - 9'd1) || 
+    (grid_read_y[8:0] == brush_y[8:0] + 9'd1))) ||
+    ((grid_read_y[8:0] == brush_y[8:0]) & (
+    (grid_read_x[8:0] == brush_x[8:0] - 9'd1) || 
+    (grid_read_x[8:0] == brush_x[8:0] + 9'd1)));
+
+// ============================================================
+// Pause indicator (Feature 4)
+// ============================================================
+// hps_keys bit 0 indicates pause
+wire pause_active = hps_keys[0];
+// Pause icon: two vertical bars centered at approximately (8,8) in grid coords
+wire in_pause_icon;
+wire pause_bar_left;
+wire pause_bar_right;
+assign pause_bar_left  = (grid_read_x[8:0] == 9'd19) & 
+                          (grid_read_y[8:0] >= 9'd14 && grid_read_y[8:0] <= 9'd25);
+assign pause_bar_right = (grid_read_x[8:0] == 9'd21) & 
+                          (grid_read_y[8:0] >= 9'd14 && grid_read_y[8:0] <= 9'd25);
+assign in_pause_icon = pause_bar_left | pause_bar_right;
+
+// ============================================================
+// Final color mapping with layered priority:
+// 1. Base grid material color
+// 2. Toolbar override
+// 3. Fire block override
+// 4. Cursor override
+// ============================================================
+reg [7:0] grid_color;
 reg [7:0] final_vga_color;
 always @(*) begin
     case(vga_data_out)
-        MAT_EMPTY: final_vga_color = 8'b000_000_00; // Black
-        MAT_SAND:  final_vga_color = 8'b111_110_00; // Yellow
-        MAT_WATER: final_vga_color = 8'b000_010_11; // Blue
-        MAT_WALL:  final_vga_color = 8'b011_011_01; // Gray
-        MAT_FIRE:  final_vga_color = visual_anim_ctr[1] ? 8'b111_010_01 : 8'b111_000_00;
-        MAT_SMOKE: final_vga_color = visual_anim_ctr[2] ? 8'b110_110_11 : 8'b100_100_10;
-        default:   final_vga_color = 8'b000_000_00;
+        MAT_EMPTY: grid_color = 8'b000_000_00; // Black
+        MAT_SAND:  grid_color = 8'b111_110_00; // Yellow
+        MAT_WATER: grid_color = 8'b000_010_11; // Blue
+        MAT_WALL:  grid_color = 8'b011_011_01; // Gray
+        MAT_FIRE:  grid_color = visual_anim_ctr[1] ? 8'b111_010_01 : 8'b111_000_00;
+        MAT_SMOKE: grid_color = visual_anim_ctr[2] ? 8'b110_110_11 : 8'b100_100_10;
+        default:   grid_color = 8'b000_000_00;
     endcase
 end
 
+// Toolbar color
+reg [7:0] toolbar_color;
+always @(*) begin
+    // Default toolbar background: dark reddish-brown
+    toolbar_color = 8'b101_001_10; // ~R:165,G:62,B:50 approximated
+
+    // Selected slot highlight
+    if (toolbar_border && toolbar_selected_slot)
+        toolbar_color = 8'b111_111_11; // White border for selected
+    else if (toolbar_border)
+        toolbar_color = 8'b010_010_01; // Darker border for non-selected
+
+    // Icon representation per slot
+    if (in_toolbar && !toolbar_border) begin
+        case (toolbar_slot)
+            2'd0: toolbar_color = 8'b011_011_01; // Wall - gray
+            2'd1: toolbar_color = 8'b000_010_11; // Water - blue
+            2'd2: toolbar_color = 8'b111_110_00; // Sand - yellow
+            2'd3: toolbar_color = 8'b111_000_00; // Fire - red
+            2'd4: toolbar_color = 8'b100_100_10; // Smoke - gray
+        endcase
+
+        // Add a lighter top/bottom stripe for visual flair
+        if (grid_read_y[8:0] == 9'd202 || grid_read_y[8:0] == 9'd237)
+            toolbar_color = 8'b100_010_01; // Highlight stripe
+    end
+end
+
+// Fire block color - average color across all active blocks
+reg [7:0] fire_color;
+always @(*) begin
+    if (is_ember_pixel) begin
+        fire_color = visual_anim_ctr[0] ? 8'b111_100_00 : 8'b111_011_00;
+    end else if (is_flame_pixel) begin
+        // Use a representative row for coloring (from first matching block)
+        fire_color = visual_anim_ctr[1] ? 8'b111_011_00 : 8'b111_000_00;
+    end else begin
+        fire_color = 8'b000_000_00;
+    end
+end
+
+// Cursor color
+reg [7:0] cursor_color;
+always @(*) begin
+    if (cursor_center)
+        cursor_color = 8'b111_111_11; // Yellow center
+    else if (cursor_ring)
+        cursor_color = 8'b000_111_00; // Green ring
+    else
+        cursor_color = 8'b000_000_00;
+end
+
+// Final composition
+always @(*) begin
+    final_vga_color = grid_color; // Default: grid material
+    if (in_toolbar)
+        final_vga_color = toolbar_color;
+    if (in_fire_block && (is_flame_pixel | is_ember_pixel))
+        final_vga_color = fire_color;
+    if (cursor_center | cursor_ring)
+        final_vga_color = cursor_color; // Cursor on top
+    // Pause indicator (Feature 4): bright white bars on top of everything when paused
+    if (pause_active && in_pause_icon)
+        final_vga_color = 8'b111_111_11;
+end
+
+// vga_driver instantiation follows with .color_in(final_vga_color)
+
 //=======================================================
-// LFSR - 16-bit Linear Feedback Shift Register
+// LFSR
 // Provides a pseudo-random bit each clock cycle.
 // Used by sand (diagonal slide) and water (left/right spread).
 // Taps: [15,13,12,10] — maximal-length primitive polynomial.
@@ -1100,10 +1424,13 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                                     : (cy * GRID_WIDTH) + (cx - 10'd1);
                     ca_write_data <= MAT_FIRE;
                 end else begin
-                    // Both sides blocked — burn in place
+                    // Both sides blocked — burn in place (register fire block root)
                     ca_we         <= 1'b1;
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
+                    fire_register_trigger <= 1'b1;
+                    fire_register_x       <= cx[8:0];
+                    fire_register_y       <= cy[8:0];
                 end
                 state <= S_NEXT_PIXEL;
             end
