@@ -220,6 +220,7 @@ parameter MAT_WATER = 4'd2;
 parameter MAT_WALL  = 4'd3;
 parameter MAT_FIRE  = 4'd4;
 parameter MAT_SMOKE = 4'd5;
+parameter MAT_WATER_ACTIVE = 4'd6; // Water on solid, allowed to spread (accumulation→spread pipeline)
 
 // VGA -> Grid coordinate mapping (640x480 -> 320x240, divide by 2)
 wire [8:0] grid_read_x = next_x[9:1]; 
@@ -460,6 +461,7 @@ always @(*) begin
         MAT_WALL:  grid_color = 8'b011_011_01; // Gray
         MAT_FIRE:  grid_color = visual_anim_ctr[1] ? 8'b111_010_01 : 8'b111_000_00;
         MAT_SMOKE: grid_color = visual_anim_ctr[2] ? 8'b110_110_11 : 8'b100_100_10;
+        MAT_WATER_ACTIVE: grid_color = 8'b100_111_11; // Light cyan — active spread state (debug)
         default:   grid_color = 8'b000_000_00;
     endcase
 end
@@ -969,13 +971,27 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
                     MAT_WATER: begin
                         if (cy == CANVAS_ROWS - 10'd1) begin
-                            // Already at the bottom row, stay there.
+                            // Bottom row — accumulate, no spread
                             ca_we         <= 1'b1;
                             ca_write_addr <= (cy * GRID_WIDTH) + cx;
                             ca_write_data <= MAT_WATER;
                             state         <= S_NEXT_PIXEL;
                         end else begin
-                            // Read cell directly below: (cx, cy+1)
+                            // Normal water: ONLY fall or accumulate. Never spread.
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
+                            state        <= S_CHK_BOT_WT;
+                        end
+                    end
+
+                    MAT_WATER_ACTIVE: begin
+                        if (cy == CANVAS_ROWS - 10'd1) begin
+                            // Bottom row active water: lose active state back to normal
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_WATER;
+                            state         <= S_NEXT_PIXEL;
+                        end else begin
+                            // Active water: check below — may fall, stabilize, or spread
                             ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
                             state        <= S_CHK_BOT_WT;
                         end
@@ -1052,39 +1068,60 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                         end
                     end else begin
                         // -----------------------------------------------
-                        // Water: accumulation vs active spread
-                        // - Below is WATER   → accumulate (write self back, no spread)
-                        // - Below is WALL/SAND → active water (try horizontal spread)
-                        // - Below is unknown  → accumulate (safe default)
+                        // Water: accumulation vs activation vs active spread
+                        //
+                        // Normal water (MAT_WATER):
+                        //   - Below is WATER/ACTIVE → accumulate, stay stable
+                        //   - Below is WALL/SAND → write MAT_WATER_ACTIVE (next frame: spread)
+                        //
+                        // Active water (MAT_WATER_ACTIVE):
+                        //   - Below is WATER → stabilize (write MAT_WATER, pile up)
+                        //   - Below is WALL/SAND → try horizontal spread (SIDE1/2)
+                        //   - Below is anything else → stabilize (safe default)
+                        //
+                        // Side spread: writes water to neighbor, self-not-written = moved
+                        // (S_CLEAR zeroed the back buffer, so not writing self → empty)
                         // -----------------------------------------------
-                        if (ca_read_data == MAT_WATER) begin
-                            // Water on water — accumulate, stay stable
+                        if (current_mat == MAT_WATER) begin
+                            // Normal water: accumulate or activate (NEVER spread this frame)
                             ca_we         <= 1'b1;
                             ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                            ca_write_data <= MAT_WATER;
-                            state         <= S_NEXT_PIXEL;
-                        end else begin
-                            // Water on solid (WALL/SAND) — active water, try horizontal spread
-                            // Side spread only targets EMPTY cells (not smoke/fire)
-                            if (diag_side == 1'b0) begin
-                                // Prioritize left
-                                if (cx == 10'd0) begin
-                                    // Left edge, try right directly
-                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
-                                    state        <= S_CHK_SIDE2_WT;
-                                end else begin
-                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
-                                    state        <= S_CHK_SIDE1_WT;
-                                end
+                            if (ca_read_data == MAT_WATER || ca_read_data == MAT_WATER_ACTIVE) begin
+                                // Below is water → accumulate, stay stable
+                                ca_write_data <= MAT_WATER;
                             end else begin
-                                // Prioritize right
-                                if (cx == GRID_WIDTH - 10'd1) begin
-                                    // Right edge, try left directly
-                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
-                                    state        <= S_CHK_SIDE2_WT;
+                                // Below is wall/sand → activate for next frame
+                                ca_write_data <= MAT_WATER_ACTIVE;
+                            end
+                            state <= S_NEXT_PIXEL;
+                        end else begin
+                            // MAT_WATER_ACTIVE: below is solid — try horizontal spread
+                            if (ca_read_data == MAT_WATER || ca_read_data == MAT_WATER_ACTIVE) begin
+                                // Active water on water pile → stabilize, revert to normal
+                                ca_we         <= 1'b1;
+                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                ca_write_data <= MAT_WATER;
+                                state         <= S_NEXT_PIXEL;
+                            end else begin
+                                // Below is wall/sand → try spread left/right
+                                if (diag_side == 1'b0) begin
+                                    // Prioritize left
+                                    if (cx == 10'd0) begin
+                                        ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                                        state        <= S_CHK_SIDE2_WT;
+                                    end else begin
+                                        ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                                        state        <= S_CHK_SIDE1_WT;
+                                    end
                                 end else begin
-                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
-                                    state        <= S_CHK_SIDE1_WT;
+                                    // Prioritize right
+                                    if (cx == GRID_WIDTH - 10'd1) begin
+                                        ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                                        state        <= S_CHK_SIDE2_WT;
+                                    end else begin
+                                        ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                                        state        <= S_CHK_SIDE1_WT;
+                                    end
                                 end
                             end
                         end
@@ -1170,17 +1207,16 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             // ----------------------------------------------------------
-            // Water horizontal spread (simplified — direct write, no two-phase)
-            // Only active water (on solid below) reaches here.
-            // Spread only into EMPTY cells.
-            //
+            // Active water horizontal spread (only active water reaches here)
+            // Active water on solid below tries to spread left/right into EMPTY cells.
+            // Spread writes MAT_WATER to neighbor; if spread fails, reverts to MAT_WATER.
+            // Side spread target must be EMPTY (not smoke/fire) — no floating in midair.
             // SIDE1_WT/EV: read priority side neighbor
-            //   If EMPTY → write water to neighbor, done (back buffer clear = self gone)
+            //   If EMPTY → write MAT_WATER to neighbor, done
             //   If blocked → read alternate side → SIDE2_WT/EV
-            //
             // SIDE2_WT/EV:
-            //   If EMPTY → write water to neighbor, done
-            //   If blocked → write self back (water stays in place)
+            //   If EMPTY → write MAT_WATER to neighbor, done
+            //   If blocked → revert to MAT_WATER (write self)
             // ----------------------------------------------------------
             S_CHK_SIDE1_WT: begin
                 state <= S_CHK_SIDE1_EV;
@@ -1188,7 +1224,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             S_CHK_SIDE1_EV: begin
                 if (ca_read_data == MAT_EMPTY) begin
-                    // Priority side is empty — spread there directly
+                    // Priority side is empty — spread there
                     ca_we         <= 1'b1;
                     ca_write_addr <= (diag_side == 1'b0)
                                      ? (cy * GRID_WIDTH) + (cx - 10'd1)
@@ -1200,7 +1236,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     if (diag_side == 1'b0) begin
                         // Was trying left, now try right
                         if (cx == GRID_WIDTH - 10'd1) begin
-                            // At right edge, nowhere to go — stay
+                            // At right edge, nowhere to go — revert to normal water
                             ca_we         <= 1'b1;
                             ca_write_addr <= (cy * GRID_WIDTH) + cx;
                             ca_write_data <= MAT_WATER;
@@ -1212,7 +1248,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end else begin
                         // Was trying right, now try left
                         if (cx == 10'd0) begin
-                            // At left edge, nowhere to go — stay
+                            // At left edge, nowhere to go — revert to normal water
                             ca_we         <= 1'b1;
                             ca_write_addr <= (cy * GRID_WIDTH) + cx;
                             ca_write_data <= MAT_WATER;
@@ -1238,7 +1274,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                                      : (cy * GRID_WIDTH) + (cx - 10'd1); // right failed → left
                     ca_write_data <= MAT_WATER;
                 end else begin
-                    // Both sides blocked — water stays in place
+                    // Both sides blocked — revert to normal water
                     ca_we         <= 1'b1;
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_WATER;
@@ -1261,8 +1297,8 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
                     state         <= S_NEXT_PIXEL;
-                end else if (ca_read_data == MAT_WATER) begin
-                    // Water below extinguishes this flame
+                } else if (ca_read_data == MAT_WATER || ca_read_data == MAT_WATER_ACTIVE) begin
+                    // Water below extinguishes this flame (active or normal)
                     state <= S_NEXT_PIXEL;
                 end else begin
                     // Solid materials (sand/wall/fire) below — try diagonal spread
