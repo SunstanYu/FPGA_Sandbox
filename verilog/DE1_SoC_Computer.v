@@ -467,7 +467,7 @@ end
 // Toolbar color
 wire [7:0] toolbar_bg = 8'b010_010_01; // Dark unified background for all slots
 
-// Toolbar divider lines between slots (x = 63,64, 64,65? no — at x=64,65,128,129,..., 2 像素宽分隔线在 64,128,192,256)
+// Toolbar divider lines between slots — 2px wide, brighter than bg for visibility
 wire toolbar_divider = (grid_read_x[8:0] >= 9'd63  && grid_read_x[8:0] <= 9'd64) ||
                        (grid_read_x[8:0] >= 9'd127 && grid_read_x[8:0] <= 9'd128) ||
                        (grid_read_x[8:0] >= 9'd191 && grid_read_x[8:0] <= 9'd192) ||
@@ -724,7 +724,7 @@ always @(*) begin
     else if (toolbar_bottom_bar)
         toolbar_color = 8'b000_000_00; // Black bottom border
     else if (toolbar_divider)
-        toolbar_color = 8'b010_010_01; // Divider same as bg
+        toolbar_color = 8'b010_010_11; // Divider - dim blue-gray (visible vs bg 010_010_01)
     else if (slot_sel_horiz || slot_sel_vert)
         toolbar_color = 8'b111_111_11; // White selection border
     else if (any_text_pixel)
@@ -792,9 +792,11 @@ end
 //     random_bit to pick which side to attempt first. This creates
 //     natural pyramid piling.
 //
-// Water rules:
+// Water rules (accumulation + active spread):
 //   - Fall straight down if (x, y+1) is empty.
-//   - If blocked below, spread left or right using random_bit.
+//   - If blocked by WATER below → accumulate (stay in place, stable pile).
+//   - If blocked by WALL/SAND below → active water: spread left/right into empty cells only.
+//   - Active water that cannot spread returns to normal water (stays in place).
 //=======================================================
 
 // FIX: Extended state encoding to cover sand, water, fire, and smoke motion.
@@ -810,9 +812,9 @@ localparam S_IDLE              = 5'd0,
            S_CHK_DIAG2_WT      = 5'd9,   // sand: wait for second diagonal read
            S_CHK_DIAG2_EV      = 5'd10,  // sand: evaluate second diagonal
            S_CHK_SIDE1_WT      = 5'd11,  // water: wait for first side read
-           S_CHK_SIDE1_EV      = 5'd12,  // water: evaluate first side
+           S_CHK_SIDE1_EV      = 5'd12,  // water: evaluate first side (spread into EMPTY only)
            S_CHK_SIDE2_WT      = 5'd13,  // water: wait for second side read
-           S_CHK_SIDE2_EV      = 5'd14,  // water: evaluate second side
+           S_CHK_SIDE2_EV      = 5'd14,  // water: evaluate second side / write self
            S_NEXT_PIXEL        = 5'd15,
            S_CHK_FIRE_BOT_WT   = 5'd16,
            S_CHK_FIRE_BOT_EV   = 5'd17,
@@ -837,9 +839,6 @@ reg [9:0]  cx;
 reg [9:0]  cy;
 reg [3:0]  current_mat;
 reg        diag_side;
-reg        water_moving;       // 标记水已确认要移动，下一拍写邻居
-reg [16:0] water_target_addr;  // 水要移动到的目标地址
-reg        water_priority_open; // 为 true 时优先侧为空，已在 target_addr 中记录
 
 // VSync falling edge detection
 reg prev_vsync;
@@ -856,9 +855,6 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
         cy                <= 10'd0;
         current_mat       <= MAT_EMPTY;
         diag_side         <= 1'b0;
-        water_moving       <= 1'b0;
-        water_target_addr  <= 17'd0;
-        water_priority_open <= 1'b0;
     end else begin
         prev_vsync <= VGA_VS;
         ca_we      <= 1'b0; // default: no write this cycle
@@ -1056,37 +1052,40 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                         end
                     end else begin
                         // -----------------------------------------------
-                        // 水：下方被阻挡
-                        // 在双缓冲区模式下，后台已被清零，我们只需要：
-                        // - 能移动到邻居时：在 SIDE x EV 中写水到邻居（自身不写 = 后台清空）
-                        // - 两侧都阻塞时：在 SIDE x EV 中写水回原位
-                        // 注意：绝对不在这里写自己，否则会造成无限扩散！
+                        // Water: accumulation vs active spread
+                        // - Below is WATER   → accumulate (write self back, no spread)
+                        // - Below is WALL/SAND → active water (try horizontal spread)
+                        // - Below is unknown  → accumulate (safe default)
                         // -----------------------------------------------
-                        if (cx == 10'd0 && cx == GRID_WIDTH - 10'd1) begin
-                            // 宽度为1，无处可去
+                        if (ca_read_data == MAT_WATER) begin
+                            // Water on water — accumulate, stay stable
                             ca_we         <= 1'b1;
                             ca_write_addr <= (cy * GRID_WIDTH) + cx;
                             ca_write_data <= MAT_WATER;
                             state         <= S_NEXT_PIXEL;
-                        end else if (diag_side == 1'b0) begin
-                            // 优先尝试左
-                            if (cx == 10'd0) begin
-                                // 左边界，直接跳去读右
-                                ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
-                                state        <= S_CHK_SIDE2_WT;
-                            end else begin
-                                ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
-                                state        <= S_CHK_SIDE1_WT;
-                            end
                         end else begin
-                            // 优先尝试右
-                            if (cx == GRID_WIDTH - 10'd1) begin
-                                // 右边界，直接跳去读左
-                                ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
-                                state        <= S_CHK_SIDE2_WT;
+                            // Water on solid (WALL/SAND) — active water, try horizontal spread
+                            // Side spread only targets EMPTY cells (not smoke/fire)
+                            if (diag_side == 1'b0) begin
+                                // Prioritize left
+                                if (cx == 10'd0) begin
+                                    // Left edge, try right directly
+                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                                    state        <= S_CHK_SIDE2_WT;
+                                end else begin
+                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                                    state        <= S_CHK_SIDE1_WT;
+                                end
                             end else begin
-                                ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
-                                state        <= S_CHK_SIDE1_WT;
+                                // Prioritize right
+                                if (cx == GRID_WIDTH - 10'd1) begin
+                                    // Right edge, try left directly
+                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                                    state        <= S_CHK_SIDE2_WT;
+                                end else begin
+                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                                    state        <= S_CHK_SIDE1_WT;
+                                end
                             end
                         end
                     end
@@ -1171,62 +1170,53 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             // ----------------------------------------------------------
-            // 水横向扩散（方案一：读前台上一帧状态，延迟一帧）
+            // Water horizontal spread (simplified — direct write, no two-phase)
+            // Only active water (on solid below) reaches here.
+            // Spread only into EMPTY cells.
             //
-            // 进入前提（来自 S_CHK_BOT_EV）：
-            //   - 水下方被阻
-            //   - 自身已写回后台：back[(cy,cx)] = WATER
-            //   - ca_read_addr 已设置为优先侧邻居地址
-            //   - water_moving = 0
+            // SIDE1_WT/EV: read priority side neighbor
+            //   If EMPTY → write water to neighbor, done (back buffer clear = self gone)
+            //   If blocked → read alternate side → SIDE2_WT/EV
             //
-            // 流程：
-            //   SIDE1_WT/EV：读优先侧前台邻居
-            //     若空：把自身后台改为 EMPTY，记录目标，water_moving=1，进 SIDE2_WT/EV 写邻居
-            //     若非空：读另一侧，进 SIDE2_WT/EV 继续判断
-            //
-            //   SIDE2_WT/EV：
-            //     若 water_moving=1：写 WATER 到 water_target_addr，结束
-            //     若 water_moving=0：读另一侧前台邻居
-            //       若空：把自身后台改为 EMPTY，记录目标，water_moving=1，再循环一次 SIDE2
-            //       若非空：两侧都堵，自身已保留，结束
+            // SIDE2_WT/EV:
+            //   If EMPTY → write water to neighbor, done
+            //   If blocked → write self back (water stays in place)
             // ----------------------------------------------------------
             S_CHK_SIDE1_WT: begin
                 state <= S_CHK_SIDE1_EV;
             end
 
             S_CHK_SIDE1_EV: begin
-                if (ca_read_data == MAT_EMPTY ||
-                    ca_read_data == MAT_SMOKE ||
-                    ca_read_data == MAT_FIRE) begin
-                    // 优先侧为空：记录移动目标
-                    water_target_addr <= (diag_side == 1'b0)
-                                        ? (cy * GRID_WIDTH) + (cx - 10'd1)
-                                        : (cy * GRID_WIDTH) + (cx + 10'd1);
-                    water_moving      <= 1'b1;
-                    water_priority_open <= 1'b1;
-                    state             <= S_CHK_SIDE2_WT;
+                if (ca_read_data == MAT_EMPTY) begin
+                    // Priority side is empty — spread there directly
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                     ? (cy * GRID_WIDTH) + (cx - 10'd1)
+                                     : (cy * GRID_WIDTH) + (cx + 10'd1);
+                    ca_write_data <= MAT_WATER;
+                    state         <= S_NEXT_PIXEL;
                 end else begin
-                    // 优先侧被阻，发出另一侧读请求
+                    // Priority side blocked — try alternate side
                     if (diag_side == 1'b0) begin
-                        // 优先左失败 → 读右
+                        // Was trying left, now try right
                         if (cx == GRID_WIDTH - 10'd1) begin
-                            // 两侧都不行，原位不写=清空，需要写回来
+                            // At right edge, nowhere to go — stay
                             ca_we         <= 1'b1;
                             ca_write_addr <= (cy * GRID_WIDTH) + cx;
                             ca_write_data <= MAT_WATER;
-                            state <= S_NEXT_PIXEL;
+                            state         <= S_NEXT_PIXEL;
                         end else begin
                             ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
                             state        <= S_CHK_SIDE2_WT;
                         end
                     end else begin
-                        // 优先右失败 → 读左
+                        // Was trying right, now try left
                         if (cx == 10'd0) begin
-                            // 两侧都不行，原位写回来
+                            // At left edge, nowhere to go — stay
                             ca_we         <= 1'b1;
                             ca_write_addr <= (cy * GRID_WIDTH) + cx;
                             ca_write_data <= MAT_WATER;
-                            state <= S_NEXT_PIXEL;
+                            state         <= S_NEXT_PIXEL;
                         end else begin
                             ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
                             state        <= S_CHK_SIDE2_WT;
@@ -1240,35 +1230,20 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             S_CHK_SIDE2_EV: begin
-                if (water_moving) begin
-                    // 已确认移动：把水写到目标邻居格
+                if (ca_read_data == MAT_EMPTY) begin
+                    // Alternate side is empty — spread there
                     ca_we         <= 1'b1;
-                    ca_write_addr <= water_target_addr;
+                    ca_write_addr <= (diag_side == 1'b0)
+                                     ? (cy * GRID_WIDTH) + (cx + 10'd1) // left failed → right
+                                     : (cy * GRID_WIDTH) + (cx - 10'd1); // right failed → left
                     ca_write_data <= MAT_WATER;
-                    water_moving  <= 1'b0;
-                    if (water_priority_open) begin
-                        water_priority_open <= 1'b0;
-                    end
-                    state         <= S_NEXT_PIXEL;
                 end else begin
-                    // 读另一侧（备选侧）的前台结果
-                    if (ca_read_data == MAT_EMPTY ||
-                        ca_read_data == MAT_SMOKE ||
-                        ca_read_data == MAT_FIRE) begin
-                        // 备选侧为空：记录目标，下一拍写邻居
-                        water_target_addr <= (diag_side == 1'b0)
-                                            ? (cy * GRID_WIDTH) + (cx + 10'd1) // 左失败→右
-                                            : (cy * GRID_WIDTH) + (cx - 10'd1); // 右失败→左
-                        water_moving      <= 1'b1;
-                        state             <= S_CHK_SIDE2_WT; // 再走一次 SIDE2 来写邻居
-                    end else begin
-                        // 两侧都堵，水不写=后台清空，必须写回来保留
-                        ca_we         <= 1'b1;
-                        ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                        ca_write_data <= MAT_WATER;
-                        state <= S_NEXT_PIXEL;
-                    end
+                    // Both sides blocked — water stays in place
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_WATER;
                 end
+                state <= S_NEXT_PIXEL;
             end
 
             // ----------------------------------------------------------
