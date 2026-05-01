@@ -220,7 +220,7 @@ parameter MAT_WATER = 4'd2;
 parameter MAT_WALL  = 4'd3;
 parameter MAT_FIRE  = 4'd4;
 parameter MAT_SMOKE = 4'd5;
-parameter MAT_WATER_ACTIVE = 4'd6; // Water on solid, allowed to spread (accumulation→spread pipeline)
+parameter MAT_WATER_ACTIVE = 4'd6; // Active state — water on solid, allowed to spread
 
 // VGA -> Grid coordinate mapping (640x480 -> 320x240, divide by 2)
 wire [8:0] grid_read_x = next_x[9:1]; 
