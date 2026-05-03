@@ -213,6 +213,7 @@ parameter MAT_EMPTY = 4'd0;
 parameter MAT_SAND  = 4'd1;
 parameter MAT_WATER = 4'd2;
 parameter MAT_WALL  = 4'd3;
+parameter MAT_WATER_ACTIVE = 4'd6; // Active/spreading water state
 parameter MAT_FIRE  = 4'd4;
 parameter MAT_SMOKE = 4'd5;
 
@@ -344,6 +345,7 @@ always @(*) begin
         MAT_EMPTY: grid_color = 8'b000_000_00; // Black
         MAT_SAND:  grid_color = 8'b111_110_00; // Yellow
         MAT_WATER: grid_color = 8'b000_010_11; // Blue
+        MAT_WATER_ACTIVE: grid_color = 8'b000_111_11; // Light blue for debug active water
         MAT_WALL:  grid_color = 8'b011_011_01; // Gray
         MAT_FIRE:  grid_color = visual_anim_ctr[1] ? 8'b111_010_01 : 8'b111_000_00;
         MAT_SMOKE: grid_color = visual_anim_ctr[2] ? 8'b110_110_11 : 8'b100_100_10;
@@ -358,7 +360,7 @@ wire in_toolbar;
 assign in_toolbar = (grid_read_y >= 9'd200 && grid_read_y <= 9'd239);
 
 // Toolbar slot computation (5 slots of 64px each)
-wire [1:0] toolbar_slot;
+wire [2:0] toolbar_slot;
 assign toolbar_slot = grid_read_x[8:6]; // 0..4: 0-63, 64-127, 128-191, 192-255, 256-319
 
 // Toolbar borders
@@ -370,11 +372,11 @@ wire toolbar_bottom_border = (grid_read_y[8:0] == 9'd239);
 wire toolbar_border        = toolbar_left_border | toolbar_top_border | toolbar_bottom_border;
 
 wire toolbar_selected_slot;
-assign toolbar_selected_slot = (brush_mat == 4'd3 && toolbar_slot == 2'd0) ||
-                               (brush_mat == 4'd2 && toolbar_slot == 2'd1) ||
-                               (brush_mat == 4'd1 && toolbar_slot == 2'd2) ||
-                               (brush_mat == 4'd4 && toolbar_slot == 2'd3) ||
-                               (brush_mat == 4'd5 && toolbar_slot == 2'd4);
+assign toolbar_selected_slot = (brush_mat == 4'd3 && toolbar_slot == 3'd0) ||
+                               (brush_mat == 4'd2 && toolbar_slot == 3'd1) ||
+                               (brush_mat == 4'd1 && toolbar_slot == 3'd2) ||
+                               (brush_mat == 4'd4 && toolbar_slot == 3'd3) ||
+                               (brush_mat == 4'd5 && toolbar_slot == 3'd4);
 
 // Toolbar divider lines between slots — 2px wide
 wire toolbar_divider = (grid_read_x[8:0] >= 9'd63  && grid_read_x[8:0] <= 9'd64) ||
@@ -387,12 +389,12 @@ wire toolbar_top_bar = (grid_read_y[8:0] >= 9'd198 && grid_read_y[8:0] <= 9'd199
 wire toolbar_bottom_bar = (grid_read_y[8:0] >= 9'd238 && grid_read_y[8:0] <= 9'd239);
 
 // Selected slot bounding box
-wire slot_sel_left  = (toolbar_slot == 2'd0) && (grid_read_x[8:0] == 9'd0);
-wire slot_sel_right = (toolbar_slot == 2'd0) && (grid_read_x[8:0] == 9'd63);
-wire slot_sel_right2 = (toolbar_slot == 2'd1) && (grid_read_x[8:0] == 9'd127);
-wire slot_sel_right3 = (toolbar_slot == 2'd2) && (grid_read_x[8:0] == 9'd191);
-wire slot_sel_right4 = (toolbar_slot == 2'd3) && (grid_read_x[8:0] == 9'd255);
-wire slot_sel_right5 = (toolbar_slot == 2'd4) && (grid_read_x[8:0] == 9'd319);
+wire slot_sel_left  = (toolbar_slot == 3'd0) && (grid_read_x[8:0] == 9'd0);
+wire slot_sel_right = (toolbar_slot == 3'd0) && (grid_read_x[8:0] == 9'd63);
+wire slot_sel_right2 = (toolbar_slot == 3'd1) && (grid_read_x[8:0] == 9'd127);
+wire slot_sel_right3 = (toolbar_slot == 3'd2) && (grid_read_x[8:0] == 9'd191);
+wire slot_sel_right4 = (toolbar_slot == 3'd3) && (grid_read_x[8:0] == 9'd255);
+wire slot_sel_right5 = (toolbar_slot == 3'd4) && (grid_read_x[8:0] == 9'd319);
 wire slot_sel_top    = (grid_read_y[8:0] == 9'd200);
 wire slot_sel_bottom = (grid_read_y[8:0] == 9'd239);
 wire slot_sel_vert   = toolbar_selected_slot && (slot_sel_left || slot_sel_right || slot_sel_right2 || slot_sel_right3 || slot_sel_right4 || slot_sel_right5);
@@ -554,11 +556,11 @@ wire t4_pixel =
   ( (grid_read_x[8:0] == 9'd295) && t4_y3 ) |
   ( (grid_read_x[8:0] >= 9'd295 && grid_read_x[8:0] <= 9'd297) && t4_y4 );
 
-wire any_text_pixel = (in_toolbar && toolbar_slot == 2'd0 && in_text_area_y && t0_pixel) ||
-                      (in_toolbar && toolbar_slot == 2'd1 && in_text_area_y && t1_pixel) ||
-                      (in_toolbar && toolbar_slot == 2'd2 && in_text_area_y && t2_pixel) ||
-                      (in_toolbar && toolbar_slot == 2'd3 && in_text_area_y && t3_pixel) ||
-                      (in_toolbar && toolbar_slot == 2'd4 && in_text_area_y && t4_pixel);
+wire any_text_pixel = (in_toolbar && toolbar_slot == 3'd0 && in_text_area_y && t0_pixel) ||
+                      (in_toolbar && toolbar_slot == 3'd1 && in_text_area_y && t1_pixel) ||
+                      (in_toolbar && toolbar_slot == 3'd2 && in_text_area_y && t2_pixel) ||
+                      (in_toolbar && toolbar_slot == 3'd3 && in_text_area_y && t3_pixel) ||
+                      (in_toolbar && toolbar_slot == 3'd4 && in_text_area_y && t4_pixel);
 
 wire [7:0] slot0_text_color = 8'b011_011_01; // Wall - gray
 wire [7:0] slot1_text_color = 8'b000_010_11; // Water - blue
@@ -566,10 +568,10 @@ wire [7:0] slot2_text_color = 8'b111_110_00; // Sand - yellow
 wire [7:0] slot3_text_color = 8'b111_100_00; // Fire - orange
 wire [7:0] slot4_text_color = 8'b010_010_00; // Smoke - dark gray
 
-wire [7:0] text_color = (toolbar_slot == 2'd0) ? slot0_text_color :
-                        (toolbar_slot == 2'd1) ? slot1_text_color :
-                        (toolbar_slot == 2'd2) ? slot2_text_color :
-                        (toolbar_slot == 2'd3) ? slot3_text_color :
+wire [7:0] text_color = (toolbar_slot == 3'd0) ? slot0_text_color :
+                        (toolbar_slot == 3'd1) ? slot1_text_color :
+                        (toolbar_slot == 3'd2) ? slot2_text_color :
+                        (toolbar_slot == 3'd3) ? slot3_text_color :
                                                   slot4_text_color;
 
 // Toolbar color logic
@@ -682,38 +684,43 @@ end
 
 // States 0-18: temp.v sand+water
 // States 19-28: fire + smoke (new)
-localparam S_IDLE        = 5'd0,
-           S_CLEAR       = 5'd1,
-           S_SWEEP_READ  = 5'd2,
-           S_SWEEP_WAIT  = 5'd3,
-           S_SWEEP_EVAL  = 5'd4,
-           S_SAND_DN_WT  = 5'd5,
-           S_SAND_DN_EV  = 5'd6,
-           S_SAND_SWAP   = 5'd7,
-           S_SAND_DG1_WT = 5'd8,
-           S_SAND_DG1_EV = 5'd9,
-           S_SAND_DG2_WT = 5'd10,
-           S_SAND_DG2_EV = 5'd11,
-           S_WATR_DN_WT  = 5'd12,
-           S_WATR_DN_EV  = 5'd13,
-           S_WATR_S1_WT  = 5'd14,
-           S_WATR_S1_EV  = 5'd15,
-           S_WATR_S2_WT  = 5'd16,
-           S_WATR_S2_EV  = 5'd17,
-           S_NEXT_PIXEL  = 5'd18,
-           // Fire + Smoke states (5'd19 - 5'd28)
-           S_FIRE_DN_WT  = 5'd19,
-           S_FIRE_DN_EV  = 5'd20,
-           S_FIRE_DIAG_WT = 5'd21,
-           S_FIRE_DIAG_EV = 5'd22,
-           S_FIRE_SIDE1_WT = 5'd23,
-           S_FIRE_SIDE1_EV = 5'd24,
-           S_SMK_UP_WT   = 5'd25,
-           S_SMK_UP_EV   = 5'd26,
-           S_SMK_DIAG_WT = 5'd27,
-           S_SMK_DIAG_EV = 5'd28;
+localparam S_IDLE        = 6'd0,
+           S_CLEAR       = 6'd1,
+           S_SWEEP_READ  = 6'd2,
+           S_SWEEP_WAIT  = 6'd3,
+           S_SWEEP_EVAL  = 6'd4,
+           S_SAND_DN_WT  = 6'd5,
+           S_SAND_DN_EV  = 6'd6,
+           S_SAND_SWAP   = 6'd7,
+           S_SAND_DG1_WT = 6'd8,
+           S_SAND_DG1_EV = 6'd9,
+           S_SAND_DG2_WT = 6'd10,
+           S_SAND_DG2_EV = 6'd11,
+           // Water states. Normal water accumulates first; active water spreads later.
+           S_WATR_DN_WT      = 6'd12,
+           S_WATR_DN_EV      = 6'd13,
+           S_WATR_S1_WT      = 6'd14,
+           S_WATR_S1_EV      = 6'd15,
+           S_WATR_S1_SUP_WT  = 6'd16,
+           S_WATR_S1_SUP_EV  = 6'd17,
+           S_WATR_S2_WT      = 6'd18,
+           S_WATR_S2_EV      = 6'd19,
+           S_WATR_S2_SUP_WT  = 6'd20,
+           S_WATR_S2_SUP_EV  = 6'd21,
+           S_NEXT_PIXEL      = 6'd22,
+           // Fire + Smoke states
+           S_FIRE_DN_WT      = 6'd23,
+           S_FIRE_DN_EV      = 6'd24,
+           S_FIRE_DIAG_WT    = 6'd25,
+           S_FIRE_DIAG_EV    = 6'd26,
+           S_FIRE_SIDE1_WT   = 6'd27,
+           S_FIRE_SIDE1_EV   = 6'd28,
+           S_SMK_UP_WT       = 6'd29,
+           S_SMK_UP_EV       = 6'd30,
+           S_SMK_DIAG_WT     = 6'd31,
+           S_SMK_DIAG_EV     = 6'd32;
 
-reg [4:0]  state;
+reg [5:0]  state;
 reg [16:0] clear_addr;
 reg [9:0]  cx;
 reg [9:0]  cy;
@@ -722,6 +729,23 @@ reg        rnd;           // LFSR sample for priority direction
 
 reg prev_vsync;
 wire vsync_falling_edge = (prev_vsync == 1'b1 && VGA_VS == 1'b0);
+
+
+// Water helper predicates for the two-stage water logic.
+function is_water_like;
+    input [3:0] m;
+    begin
+        is_water_like = (m == MAT_WATER || m == MAT_WATER_ACTIVE);
+    end
+endfunction
+
+function is_supported_for_water;
+    input [3:0] m;
+    begin
+        is_supported_for_water = (m == MAT_WALL || m == MAT_SAND ||
+                                  m == MAT_WATER || m == MAT_WATER_ACTIVE);
+    end
+endfunction
 
 always @(posedge M10k_pll or negedge sys_reset_n) begin
     if (!sys_reset_n) begin
@@ -828,6 +852,18 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                         end
                     end
 
+                    MAT_WATER_ACTIVE: begin
+                        if (cy == CANVAS_ROWS - 10'd1) begin
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_WATER;
+                            state         <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
+                            state        <= S_WATR_DN_WT;
+                        end
+                    end
+
                     // ===========================
                     // FIRE physics
                     // ===========================
@@ -878,8 +914,8 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_SAND;
                     state         <= S_NEXT_PIXEL;
-                end else if (ca_read_data == MAT_WATER) begin
-                    // Swap: sand → below, water → sand's position (step 2)
+                end else if (ca_read_data == MAT_WATER || ca_read_data == MAT_WATER_ACTIVE) begin
+                    // Swap: sand -> below, water -> sand's position
                     ca_we         <= 1'b1;
                     ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_SAND;
@@ -981,47 +1017,76 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             // ==================================================
-            // WATER physics (from temp.v)
+            // WATER physics: two-stage accumulation + active spreading
             // ==================================================
             S_WATR_DN_WT: state <= S_WATR_DN_EV;
 
             S_WATR_DN_EV: begin
-                if (ca_read_data == MAT_EMPTY) begin
-                    ca_we         <= 1'b1;
-                    ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
-                    ca_write_data <= MAT_WATER;
-                    state         <= S_NEXT_PIXEL;
-                end else begin
-                    // Below blocked → try horizontal (read FRONT = previous frame)
-                    if (rnd == 1'b0) begin
-                        if (cx == 10'd0) begin
-                            if (cx == GRID_WIDTH - 10'd1) begin
-                                ca_we         <= 1'b1;
-                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                                ca_write_data <= MAT_WATER;
-                                state         <= S_NEXT_PIXEL;
-                            end else begin
-                                ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
-                                state        <= S_WATR_S2_WT;
-                            end
-                        end else begin
-                            ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
-                            state        <= S_WATR_S1_WT;
-                        end
+                if (current_mat == MAT_WATER) begin
+                    if (ca_read_data == MAT_EMPTY ||
+                        ca_read_data == MAT_SMOKE ||
+                        ca_read_data == MAT_FIRE) begin
+                        // Normal water falls straight down.
+                        ca_we         <= 1'b1;
+                        ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
+                        ca_write_data <= MAT_WATER;
+                        state         <= S_NEXT_PIXEL;
                     end else begin
-                        if (cx == GRID_WIDTH - 10'd1) begin
+                        // Reference behavior: if normal water cannot fall, do NOT spread
+                        // immediately. Keep this cell for the current frame, but mark it
+                        // active so the next frame can perform one horizontal relaxation step.
+                        // This applies both on solid support and on uneven water surfaces.
+                        ca_we         <= 1'b1;
+                        ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                        ca_write_data <= MAT_WATER_ACTIVE;
+                        state         <= S_NEXT_PIXEL;
+                    end
+                end else begin
+                    // MAT_WATER_ACTIVE: if it cannot fall, it is allowed to try
+                    // a one-cell horizontal spread/relaxation step, even when it is
+                    // supported by water. This is the key difference from the previous
+                    // version, where active water on water immediately became stable and
+                    // therefore never spread over an uneven water surface.
+                    if (ca_read_data == MAT_EMPTY ||
+                        ca_read_data == MAT_SMOKE ||
+                        ca_read_data == MAT_FIRE) begin
+                        // If unsupported, keep falling and remain active.
+                        ca_we         <= 1'b1;
+                        ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
+                        ca_write_data <= MAT_WATER_ACTIVE;
+                        state         <= S_NEXT_PIXEL;
+                    end else begin
+                        // Blocked below: try horizontal spreading with support check.
+                        if (rnd == 1'b0) begin
                             if (cx == 10'd0) begin
-                                ca_we         <= 1'b1;
-                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                                ca_write_data <= MAT_WATER;
-                                state         <= S_NEXT_PIXEL;
+                                if (cx == GRID_WIDTH - 10'd1) begin
+                                    ca_we         <= 1'b1;
+                                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                    ca_write_data <= MAT_WATER;
+                                    state         <= S_NEXT_PIXEL;
+                                end else begin
+                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                                    state        <= S_WATR_S2_WT;
+                                end
                             end else begin
                                 ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
-                                state        <= S_WATR_S2_WT;
+                                state        <= S_WATR_S1_WT;
                             end
                         end else begin
-                            ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
-                            state        <= S_WATR_S1_WT;
+                            if (cx == GRID_WIDTH - 10'd1) begin
+                                if (cx == 10'd0) begin
+                                    ca_we         <= 1'b1;
+                                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                                    ca_write_data <= MAT_WATER;
+                                    state         <= S_NEXT_PIXEL;
+                                end else begin
+                                    ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                                    state        <= S_WATR_S2_WT;
+                                end
+                            end else begin
+                                ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                                state        <= S_WATR_S1_WT;
+                            end
                         end
                     end
                 end
@@ -1031,6 +1096,42 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             S_WATR_S1_EV: begin
                 if (ca_read_data == MAT_EMPTY) begin
+                    // Side cell is empty. Now check whether the side cell is supported below.
+                    ca_read_addr <= (rnd == 1'b0)
+                        ? ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1)
+                        : ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                    state <= S_WATR_S1_SUP_WT;
+                end else begin
+                    // First side blocked. Try the opposite side if possible.
+                    if (rnd == 1'b0) begin
+                        if (cx == GRID_WIDTH - 10'd1) begin
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_WATER;
+                            state         <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                            state        <= S_WATR_S2_WT;
+                        end
+                    end else begin
+                        if (cx == 10'd0) begin
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_WATER;
+                            state         <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                            state        <= S_WATR_S2_WT;
+                        end
+                    end
+                end
+            end
+
+            S_WATR_S1_SUP_WT: state <= S_WATR_S1_SUP_EV;
+
+            S_WATR_S1_SUP_EV: begin
+                if (is_supported_for_water(ca_read_data)) begin
+                    // Move to the first side only if that side has support below.
                     ca_we         <= 1'b1;
                     ca_write_data <= MAT_WATER;
                     ca_write_addr <= (rnd == 1'b0)
@@ -1038,6 +1139,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                         : (cy * GRID_WIDTH) + (cx + 10'd1);
                     state <= S_NEXT_PIXEL;
                 end else begin
+                    // Unsupported side would make water float sideways. Try the opposite side.
                     if (rnd == 1'b0) begin
                         if (cx == GRID_WIDTH - 10'd1) begin
                             ca_we         <= 1'b1;
@@ -1066,6 +1168,23 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             S_WATR_S2_EV: begin
                 if (ca_read_data == MAT_EMPTY) begin
+                    ca_read_addr <= (rnd == 1'b0)
+                        ? ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1)
+                        : ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                    state <= S_WATR_S2_SUP_WT;
+                end else begin
+                    // Both sides failed. Active water becomes stable water instead of disappearing.
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_WATER;
+                    state         <= S_NEXT_PIXEL;
+                end
+            end
+
+            S_WATR_S2_SUP_WT: state <= S_WATR_S2_SUP_EV;
+
+            S_WATR_S2_SUP_EV: begin
+                if (is_supported_for_water(ca_read_data)) begin
                     ca_we         <= 1'b1;
                     ca_write_data <= MAT_WATER;
                     ca_write_addr <= (rnd == 1'b0)
@@ -1092,7 +1211,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
                     state         <= S_NEXT_PIXEL;
-                end else if (ca_read_data == MAT_WATER) begin
+                end else if (ca_read_data == MAT_WATER || ca_read_data == MAT_WATER_ACTIVE) begin
                     // Water extinguishes — disappear
                     state <= S_NEXT_PIXEL;
                 end else begin
@@ -1139,7 +1258,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_write_data <= MAT_FIRE;
                     ca_write_addr <= ca_read_addr; // already computed
                     state         <= S_NEXT_PIXEL;
-                end else {
+                end else begin
                     // Diagonal blocked → try side spread
                     // Note: side spread is same-level (same y)
                     if (rnd == 1'b0) begin
@@ -1165,7 +1284,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                             state        <= S_FIRE_SIDE1_WT;
                         end
                     end
-                }
+                end
             end
 
             S_FIRE_SIDE1_WT: state <= S_FIRE_SIDE1_EV;
@@ -1447,28 +1566,28 @@ module vga_driver (
     output clk,
     output blank
 );
-    parameter [9:0] H_ACTIVE = 10'd_639;
-    parameter [9:0] H_FRONT  = 10'd_15;
-    parameter [9:0] H_PULSE  = 10'd_95;
-    parameter [9:0] H_BACK   = 10'd_47;
+    parameter [9:0] H_ACTIVE = 10'd639;
+    parameter [9:0] H_FRONT  = 10'd15;
+    parameter [9:0] H_PULSE  = 10'd95;
+    parameter [9:0] H_BACK   = 10'd47;
 
-    parameter [9:0] V_ACTIVE = 10'd_479;
-    parameter [9:0] V_FRONT  = 10'd_9;
-    parameter [9:0] V_PULSE  = 10'd_1;
-    parameter [9:0] V_BACK   = 10'd_32;
+    parameter [9:0] V_ACTIVE = 10'd479;
+    parameter [9:0] V_FRONT  = 10'd9;
+    parameter [9:0] V_PULSE  = 10'd1;
+    parameter [9:0] V_BACK   = 10'd32;
 
-    parameter LOW  = 1'b_0;
-    parameter HIGH = 1'b_1;
+    parameter LOW  = 1'b0;
+    parameter HIGH = 1'b1;
 
-    parameter [7:0] H_ACTIVE_STATE = 8'd_0;
-    parameter [7:0] H_FRONT_STATE  = 8'd_1;
-    parameter [7:0] H_PULSE_STATE  = 8'd_2;
-    parameter [7:0] H_BACK_STATE   = 8'd_3;
+    parameter [7:0] H_ACTIVE_STATE = 8'd0;
+    parameter [7:0] H_FRONT_STATE  = 8'd1;
+    parameter [7:0] H_PULSE_STATE  = 8'd2;
+    parameter [7:0] H_BACK_STATE   = 8'd3;
 
-    parameter [7:0] V_ACTIVE_STATE = 8'd_0;
-    parameter [7:0] V_FRONT_STATE  = 8'd_1;
-    parameter [7:0] V_PULSE_STATE  = 8'd_2;
-    parameter [7:0] V_BACK_STATE   = 8'd_3;
+    parameter [7:0] V_ACTIVE_STATE = 8'd0;
+    parameter [7:0] V_FRONT_STATE  = 8'd1;
+    parameter [7:0] V_PULSE_STATE  = 8'd2;
+    parameter [7:0] V_BACK_STATE   = 8'd3;
 
     reg hysnc_reg;
     reg vsync_reg;
@@ -1483,57 +1602,57 @@ module vga_driver (
 
     always @(posedge clock) begin
         if (reset) begin
-            h_counter <= 10'd_0;
-            v_counter <= 10'd_0;
+            h_counter <= 10'd0;
+            v_counter <= 10'd0;
             h_state   <= H_ACTIVE_STATE;
             v_state   <= V_ACTIVE_STATE;
             line_done <= LOW;
         end else begin
             if (h_state == H_ACTIVE_STATE) begin
-                h_counter <= (h_counter == H_ACTIVE) ? 10'd_0 : (h_counter + 10'd_1);
+                h_counter <= (h_counter == H_ACTIVE) ? 10'd0 : (h_counter + 10'd1);
                 hysnc_reg <= HIGH;
                 line_done <= LOW;
                 h_state   <= (h_counter == H_ACTIVE) ? H_FRONT_STATE : H_ACTIVE_STATE;
             end
             if (h_state == H_FRONT_STATE) begin
-                h_counter <= (h_counter == H_FRONT) ? 10'd_0 : (h_counter + 10'd_1);
+                h_counter <= (h_counter == H_FRONT) ? 10'd0 : (h_counter + 10'd1);
                 hysnc_reg <= HIGH;
                 h_state   <= (h_counter == H_FRONT) ? H_PULSE_STATE : H_FRONT_STATE;
             end
             if (h_state == H_PULSE_STATE) begin
-                h_counter <= (h_counter == H_PULSE) ? 10'd_0 : (h_counter + 10'd_1);
+                h_counter <= (h_counter == H_PULSE) ? 10'd0 : (h_counter + 10'd1);
                 hysnc_reg <= LOW;
                 h_state   <= (h_counter == H_PULSE) ? H_BACK_STATE : H_PULSE_STATE;
             end
             if (h_state == H_BACK_STATE) begin
-                h_counter <= (h_counter == H_BACK) ? 10'd_0 : (h_counter + 10'd_1);
+                h_counter <= (h_counter == H_BACK) ? 10'd0 : (h_counter + 10'd1);
                 hysnc_reg <= HIGH;
                 h_state   <= (h_counter == H_BACK) ? H_ACTIVE_STATE : H_BACK_STATE;
                 line_done <= (h_counter == (H_BACK - 1)) ? HIGH : LOW;
             end
             if (v_state == V_ACTIVE_STATE) begin
-                v_counter <= (line_done == HIGH) ? ((v_counter == V_ACTIVE) ? 10'd_0 : (v_counter + 10'd_1)) : v_counter;
+                v_counter <= (line_done == HIGH) ? ((v_counter == V_ACTIVE) ? 10'd0 : (v_counter + 10'd1)) : v_counter;
                 vsync_reg <= HIGH;
                 v_state   <= (line_done == HIGH) ? ((v_counter == V_ACTIVE) ? V_FRONT_STATE : V_ACTIVE_STATE) : V_ACTIVE_STATE;
             end
             if (v_state == V_FRONT_STATE) begin
-                v_counter <= (line_done == HIGH) ? ((v_counter == V_FRONT) ? 10'd_0 : (v_counter + 10'd_1)) : v_counter;
+                v_counter <= (line_done == HIGH) ? ((v_counter == V_FRONT) ? 10'd0 : (v_counter + 10'd1)) : v_counter;
                 vsync_reg <= HIGH;
                 v_state   <= (line_done == HIGH) ? ((v_counter == V_FRONT) ? V_PULSE_STATE : V_FRONT_STATE) : V_FRONT_STATE;
             end
             if (v_state == V_PULSE_STATE) begin
-                v_counter <= (line_done == HIGH) ? ((v_counter == V_PULSE) ? 10'd_0 : (v_counter + 10'd_1)) : v_counter;
+                v_counter <= (line_done == HIGH) ? ((v_counter == V_PULSE) ? 10'd0 : (v_counter + 10'd1)) : v_counter;
                 vsync_reg <= LOW;
                 v_state   <= (line_done == HIGH) ? ((v_counter == V_PULSE) ? V_BACK_STATE : V_PULSE_STATE) : V_PULSE_STATE;
             end
             if (v_state == V_BACK_STATE) begin
-                v_counter <= (line_done == HIGH) ? ((v_counter == V_BACK) ? 10'd_0 : (v_counter + 10'd_1)) : v_counter;
+                v_counter <= (line_done == HIGH) ? ((v_counter == V_BACK) ? 10'd0 : (v_counter + 10'd1)) : v_counter;
                 vsync_reg <= HIGH;
                 v_state   <= (line_done == HIGH) ? ((v_counter == V_BACK) ? V_ACTIVE_STATE : V_BACK_STATE) : V_BACK_STATE;
             end
-            red_reg   <= (h_state == H_ACTIVE_STATE) ? ((v_state == V_ACTIVE_STATE) ? {color_in[7:5], 5'd_0} : 8'd_0) : 8'd_0;
-            green_reg <= (h_state == H_ACTIVE_STATE) ? ((v_state == V_ACTIVE_STATE) ? {color_in[4:2], 5'd_0} : 8'd_0) : 8'd_0;
-            blue_reg  <= (h_state == H_ACTIVE_STATE) ? ((v_state == V_ACTIVE_STATE) ? {color_in[1:0], 6'd_0} : 8'd_0) : 8'd_0;
+            red_reg   <= (h_state == H_ACTIVE_STATE) ? ((v_state == V_ACTIVE_STATE) ? {color_in[7:5], 5'd0} : 8'd0) : 8'd0;
+            green_reg <= (h_state == H_ACTIVE_STATE) ? ((v_state == V_ACTIVE_STATE) ? {color_in[4:2], 5'd0} : 8'd0) : 8'd0;
+            blue_reg  <= (h_state == H_ACTIVE_STATE) ? ((v_state == V_ACTIVE_STATE) ? {color_in[1:0], 6'd0} : 8'd0) : 8'd0;
         end
     end
 
@@ -1543,9 +1662,9 @@ module vga_driver (
     assign green  = green_reg;
     assign blue   = blue_reg;
     assign clk    = clock;
-    assign sync   = 1'b_0;
+    assign sync   = 1'b0;
     assign blank  = hysnc_reg & vsync_reg;
-    assign next_x = (h_state == H_ACTIVE_STATE) ? h_counter : 10'd_0;
-    assign next_y = (v_state == V_ACTIVE_STATE)  ? v_counter : 10'd_0;
+    assign next_x = (h_state == H_ACTIVE_STATE) ? h_counter : 10'd0;
+    assign next_y = (v_state == V_ACTIVE_STATE)  ? v_counter : 10'd0;
 
 endmodule

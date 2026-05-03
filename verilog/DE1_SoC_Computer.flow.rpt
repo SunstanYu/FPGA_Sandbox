@@ -1,5 +1,5 @@
 Flow report for DE1_SoC_Computer
-Wed Apr 15 13:40:19 2026
+Sun May 03 18:24:05 2026
 Quartus Prime Version 18.1.0 Build 625 09/12/2018 SJ Lite Edition
 
 
@@ -40,15 +40,15 @@ refer to the applicable agreement for further details.
 +-------------------------------------------------------------------------------+
 ; Flow Summary                                                                  ;
 +---------------------------------+---------------------------------------------+
-; Flow Status                     ; Successful - Wed Apr 15 13:39:56 2026       ;
+; Flow Status                     ; Successful - Sun May 03 18:23:42 2026       ;
 ; Quartus Prime Version           ; 18.1.0 Build 625 09/12/2018 SJ Lite Edition ;
 ; Revision Name                   ; DE1_SoC_Computer                            ;
 ; Top-level Entity Name           ; DE1_SoC_Computer                            ;
 ; Family                          ; Cyclone V                                   ;
 ; Device                          ; 5CSEMA5F31C6                                ;
 ; Timing Models                   ; Final                                       ;
-; Logic utilization (in ALMs)     ; 1,592 / 32,070 ( 5 % )                      ;
-; Total registers                 ; 2347                                        ;
+; Logic utilization (in ALMs)     ; 1,904 / 32,070 ( 6 % )                      ;
+; Total registers                 ; 2387                                        ;
 ; Total pins                      ; 369 / 457 ( 81 % )                          ;
 ; Total virtual pins              ; 0                                           ;
 ; Total block memory bits         ; 616,960 / 4,065,280 ( 15 % )                ;
@@ -67,7 +67,7 @@ refer to the applicable agreement for further details.
 +-------------------+---------------------+
 ; Option            ; Setting             ;
 +-------------------+---------------------+
-; Start date & time ; 04/15/2026 13:34:33 ;
+; Start date & time ; 05/03/2026 18:18:22 ;
 ; Main task         ; Compilation         ;
 ; Revision Name     ; DE1_SoC_Computer    ;
 +-------------------+---------------------+
@@ -78,7 +78,7 @@ refer to the applicable agreement for further details.
 +-------------------------------------+------------------------------------------------------------------------------------------------------+---------------+------------------------------------------+------------------+
 ; Assignment Name                     ; Value                                                                                                ; Default Value ; Entity Name                              ; Section Id       ;
 +-------------------------------------+------------------------------------------------------------------------------------------------------+---------------+------------------------------------------+------------------+
-; COMPILER_SIGNATURE_ID               ; 198915911223969.177627447102508                                                                      ; --            ; --                                       ; --               ;
+; COMPILER_SIGNATURE_ID               ; 198915911223969.177784670024288                                                                      ; --            ; --                                       ; --               ;
 ; ENABLE_SIGNALTAP                    ; On                                                                                                   ; --            ; --                                       ; --               ;
 ; HPS_ISW_FILE                        ; Computer_System/synthesis/submodules/sequencer/alt_types.pre.h                                       ; --            ; Computer_System_ARM_A9_HPS_hps_io_border ; --               ;
 ; HPS_ISW_FILE                        ; Computer_System/synthesis/submodules/sequencer/emif.pre.xml                                          ; --            ; Computer_System_ARM_A9_HPS_hps_io_border ; --               ;
@@ -161,11 +161,11 @@ refer to the applicable agreement for further details.
 +----------------------+--------------+-------------------------+---------------------+------------------------------------+
 ; Module Name          ; Elapsed Time ; Average Processors Used ; Peak Virtual Memory ; Total CPU Time (on all processors) ;
 +----------------------+--------------+-------------------------+---------------------+------------------------------------+
-; Analysis & Synthesis ; 00:00:27     ; 1.0                     ; 5306 MB             ; 00:00:37                           ;
-; Fitter               ; 00:02:38     ; 1.1                     ; 8857 MB             ; 00:16:06                           ;
-; Assembler            ; 00:00:07     ; 1.0                     ; 4942 MB             ; 00:00:07                           ;
-; Timing Analyzer      ; 00:00:21     ; 1.6                     ; 5965 MB             ; 00:00:30                           ;
-; Total                ; 00:03:33     ; --                      ; --                  ; 00:17:20                           ;
+; Analysis & Synthesis ; 00:00:30     ; 1.0                     ; 5292 MB             ; 00:00:41                           ;
+; Fitter               ; 00:02:32     ; 1.2                     ; 8887 MB             ; 00:16:30                           ;
+; Assembler            ; 00:00:08     ; 1.0                     ; 4945 MB             ; 00:00:07                           ;
+; Timing Analyzer      ; 00:00:22     ; 1.6                     ; 5972 MB             ; 00:00:32                           ;
+; Total                ; 00:03:32     ; --                      ; --                  ; 00:17:50                           ;
 +----------------------+--------------+-------------------------+---------------------+------------------------------------+
 
 
