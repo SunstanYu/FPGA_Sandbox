@@ -117,8 +117,10 @@ int main(void)
 
 	// 启动时清空整个画布
 	printf(">>> INIT: Clearing canvas... ");
-	for (int cy = 0; cy < CANVAS_H; cy++) {
-		for (int cx = 0; cx < 320; cx++) {
+	{
+		int cx, cy;
+		for (cy = 0; cy < CANVAS_H; cy++) {
+			for (cx = 0; cx < 320; cx++) {
 			*(brush_x_ptr)   = (unsigned int)cx;
 			*(brush_y_ptr)   = (unsigned int)cy;
 			*(brush_mat_ptr) = (unsigned int)MAT_EMPTY;
