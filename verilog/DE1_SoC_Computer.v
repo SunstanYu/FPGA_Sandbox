@@ -401,7 +401,7 @@ begin
         if (ctr < 8) begin
             // Darkness spreads from top (layer 7) to bottom (layer 4)
             if (layer < ctr + 4'd4)
-                fire_color = 8'b000_000_00;  // black
+                fire_color = 8'b001_001_00;  // canvas bg
             else
                 fire_color = 8'b111_010_00;  // light red
         end else begin
@@ -409,20 +409,20 @@ begin
             if (layer < (ctr - 4'd8) + 4'd4)
                 fire_color = 8'b111_010_00;  // light red
             else
-                fire_color = 8'b000_000_00;  // black (not yet recovered)
+                fire_color = 8'b001_001_00;  // canvas bg (not yet recovered)
         end
     end else if (layer >= 8 && layer <= 9) begin
         // Outer flame (2 layers): same pattern but more aggressive
         if (ctr < 8) begin
             if (layer < ctr + 4'd6)
-                fire_color = 8'b000_000_00;  // black
+                fire_color = 8'b001_001_00;  // canvas bg
             else
                 fire_color = 8'b111_100_11;  // pink
         end else begin
             if (layer < (ctr - 4'd8) + 4'd6)
                 fire_color = 8'b111_100_11;  // pink
             else
-                fire_color = 8'b000_000_00;  // black
+                fire_color = 8'b001_001_00;  // canvas bg
         end
     end else begin
         // Inner flame (1-3): radial heat gradient + 2-phase flicker via ctr[3]
