@@ -278,6 +278,10 @@ reg         [3:0]  brush_data_sync;
 // VGA scanline y=250 is outside visible area, so this write is off-screen
 // In verilog: brush_y is 10-bit (0-1023), 250 maps to grid y=250
 reg         clear_pending;
+wire        clear_pending_done;
+
+// State machine signals this wire to clear clear_pending
+assign clear_pending_done = (state == S_CLEAR && clear_addr == MAX_CELLS - 17'd1 && clear_pending);
 
 always @(posedge M10k_pll or negedge sys_reset_n) begin
     if (!sys_reset_n) begin
@@ -291,6 +295,8 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
         // Address = 250*320 = 80000 >= MAX_CELLS(76800), so out-of-bounds
         if (brush_we_edge && (brush_mat == MAT_SMOKE) && (hps_write_addr >= MAX_CELLS))
             clear_pending <= 1'b1;
+        else if (clear_pending_done)
+            clear_pending <= 1'b0;
     end
 end
 
@@ -881,7 +887,6 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     cx         <= 10'd0;
                     cy         <= CANVAS_ROWS - 10'd1;
                     if (clear_pending) begin
-                        clear_pending <= 1'b0;
                         // Next VSYNC: BACK is still dirty from old FRONT,
                         // so clear again on the very next frame
                         state         <= S_CLEAR_AGAIN;
