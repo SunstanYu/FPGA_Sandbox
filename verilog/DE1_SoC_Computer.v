@@ -438,7 +438,7 @@ endfunction
 
 always @(*) begin
     case(vga_data_out)
-        MAT_EMPTY: grid_color = 8'b000_000_00; // Black
+        MAT_EMPTY: grid_color = 8'b001_001_00; // Dark gray (canvas bg)
         MAT_SAND:  grid_color = 8'b111_110_00; // Yellow
         MAT_WATER: grid_color = 8'b000_010_11; // Blue
         MAT_WATER_ACTIVE: grid_color = 8'b000_111_11; // Light blue
@@ -679,6 +679,15 @@ wire [7:0] text_color = (toolbar_slot == 3'd0) ? slot0_text_color :
                         (toolbar_slot == 3'd3) ? slot3_text_color :
                                                   slot4_text_color;
 
+// Material color preview strip at y=215..219 (below text, within toolbar)
+wire in_preview_strip = (grid_read_y[8:0] >= 9'd215 && grid_read_y[8:0] <= 9'd219) &&
+                        !toolbar_divider;
+wire [7:0] preview_color = (toolbar_slot == 3'd0) ? 8'b011_011_01 :  // WALL gray
+                           (toolbar_slot == 3'd1) ? 8'b000_010_11 :  // WATER blue
+                           (toolbar_slot == 3'd2) ? 8'b111_110_00 :  // SAND yellow
+                           (toolbar_slot == 3'd3) ? 8'b111_000_00 :  // FIRE red
+                                                    8'b100_100_10;   // SMOKE gray
+
 // Toolbar color logic
 reg [7:0] toolbar_color;
 always @(*) begin
@@ -688,32 +697,40 @@ always @(*) begin
     else if (toolbar_bottom_bar)
         toolbar_color = 8'b000_000_00; // black bottom border
     else if (toolbar_divider)
-        toolbar_color = 8'b010_010_11; // visible divider
+        toolbar_color = 8'b001_001_01; // dark divider
     else if (slot_sel_horiz || slot_sel_vert)
         toolbar_color = 8'b111_111_11; // white selection border
     else if (any_text_pixel)
         toolbar_color = text_color;
+    else if (in_preview_strip)
+        toolbar_color = preview_color;
+    else if (toolbar_selected_slot)
+        toolbar_color = 8'b011_011_10; // selected slot bg highlight
 end
 
 // ============================================================
-// Mouse cursor (Feature 3)
+// Mouse cursor (Feature 3) — 11-pixel crosshair (±5)
 // ============================================================
+wire [8:0] cur_y_lo = (brush_y[8:0] >= 9'd5) ? brush_y[8:0] - 9'd5 : 9'd0;
+wire [8:0] cur_y_hi = brush_y[8:0] + 9'd5;
+wire [8:0] cur_x_lo = (brush_x[8:0] >= 9'd5) ? brush_x[8:0] - 9'd5 : 9'd0;
+wire [8:0] cur_x_hi = brush_x[8:0] + 9'd5;
+
 wire cursor_center;
 wire cursor_ring;
 assign cursor_center = (grid_read_x[8:0] == brush_x[8:0]) & (grid_read_y[8:0] == brush_y[8:0]);
-assign cursor_ring   = ((grid_read_x[8:0] == brush_x[8:0]) & (
-    (grid_read_y[8:0] == brush_y[8:0] - 9'd1) || 
-    (grid_read_y[8:0] == brush_y[8:0] + 9'd1))) ||
-    ((grid_read_y[8:0] == brush_y[8:0]) & (
-    (grid_read_x[8:0] == brush_x[8:0] - 9'd1) || 
-    (grid_read_x[8:0] == brush_x[8:0] + 9'd1)));
+assign cursor_ring   =
+    ((grid_read_x[8:0] == brush_x[8:0]) &
+     (grid_read_y[8:0] >= cur_y_lo) & (grid_read_y[8:0] <= cur_y_hi)) ||
+    ((grid_read_y[8:0] == brush_y[8:0]) &
+     (grid_read_x[8:0] >= cur_x_lo) & (grid_read_x[8:0] <= cur_x_hi));
 
 reg [7:0] cursor_color;
 always @(*) begin
     if (cursor_center)
         cursor_color = 8'b111_111_11; // white center
     else if (cursor_ring)
-        cursor_color = 8'b000_111_00; // green ring
+        cursor_color = 8'b000_111_00; // green arms
     else
         cursor_color = 8'b000_000_00;
 end
