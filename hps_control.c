@@ -130,6 +130,7 @@ int main(void)
 			*(brush_we_ptr)  = 0;
 		}
 	}
+	}
 	printf("Done\n");
 
 	unsigned char mbuf[3];
