@@ -815,7 +815,9 @@ localparam S_IDLE        = 6'd0,
            S_SMK_UP_EV       = 6'd27,
            S_SMK_DIAG_WT     = 6'd28,
            S_SMK_DIAG_EV     = 6'd29,
-           S_CLEAR_AGAIN     = 6'd30;  // second pass to clear old FRONT buffer
+           S_CLEAR_AGAIN     = 6'd30,  // second pass to clear old FRONT buffer
+           S_FIRE_DN_WT      = 6'd31,  // extra wait so M10K read of cell-below settles before S_FIRE_EVAL
+           S_FIRE_MARK_WT2   = 6'd32;  // extra wait so M10K read of cell-above settles before S_FIRE_MARK_EV
 
 reg [5:0]  state;
 reg [16:0] clear_addr;
@@ -996,9 +998,10 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                             fire_mark_layer <= 4'd1;
                             state <= S_FIRE_MARK_WT;
                         end else begin
-                            // Read cell below to check if water extinguishes
+                            // Read cell below — extra wait state because M10K has
+                            // 2-cycle read latency (registered addr + registered q).
                             ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
-                            state        <= S_FIRE_EVAL;
+                            state        <= S_FIRE_DN_WT;
                         end
                     end
 
@@ -1334,6 +1337,8 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             // ==================================================
             // FIRE physics (simplified: no diffusion)
             // ==================================================
+            S_FIRE_DN_WT: state <= S_FIRE_EVAL;
+
             S_FIRE_EVAL: begin
                 if (ca_read_data == MAT_WATER || ca_read_data == MAT_WATER_ACTIVE) begin
                     // Water below → extinguish, disappear
@@ -1371,9 +1376,12 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     state <= S_NEXT_PIXEL;
                 end else begin
                     ca_read_addr <= ((cy - fire_mark_layer) * GRID_WIDTH) + cx;
-                    state        <= S_FIRE_MARK_EV;
+                    state        <= S_FIRE_MARK_WT2;
                 end
             end
+
+            // Extra wait so the M10K read of the cell-above settles before S_FIRE_MARK_EV
+            S_FIRE_MARK_WT2: state <= S_FIRE_MARK_EV;
 
             S_FIRE_MARK_EV: begin
                 if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE ||
