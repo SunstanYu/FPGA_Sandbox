@@ -686,7 +686,7 @@ wire [7:0] preview_color = (toolbar_slot == 3'd0) ? 8'b011_011_01 :  // WALL gra
                            (toolbar_slot == 3'd1) ? 8'b000_010_11 :  // WATER blue
                            (toolbar_slot == 3'd2) ? 8'b111_110_00 :  // SAND yellow
                            (toolbar_slot == 3'd3) ? 8'b111_000_00 :  // FIRE red
-                                                    8'b100_100_10;   // SMOKE gray
+                           8'b000_000_00;   // SMOKE black
 
 // Toolbar color logic
 reg [7:0] toolbar_color;
