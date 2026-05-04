@@ -425,8 +425,13 @@ begin
                 fire_color = 8'b000_000_00;  // black
         end
     end else begin
-        // Inner flame (1-3): static orange core, no animation
-        fire_color = 8'b111_100_00;
+        // Inner flame (1-3): radial heat gradient + 2-phase flicker via ctr[3]
+        case (layer)
+            4'd1: fire_color = ctr[3] ? 8'b111_111_00 : 8'b111_110_00;  // yellow-white <-> light yellow (hottest core)
+            4'd2: fire_color = ctr[3] ? 8'b111_110_00 : 8'b111_100_00;  // light yellow <-> orange
+            4'd3: fire_color = ctr[3] ? 8'b111_100_00 : 8'b111_010_00;  // orange <-> deep orange-red
+            default: fire_color = 8'b111_100_00;
+        endcase
     end
 end
 endfunction
@@ -448,7 +453,7 @@ always @(*) begin
         MAT_FIRE_6,
         MAT_FIRE_7,
         MAT_FIRE_8,
-        MAT_FIRE_9:             grid_color = fire_color(vga_data_out - 4'd6, visual_anim_ctr);
+        MAT_FIRE_9:             grid_color = fire_color(vga_data_out - 4'd6, visual_anim_ctr + {grid_read_x[2:0], 1'b0});
         default:   grid_color = 8'b000_000_00;
     endcase
 end
