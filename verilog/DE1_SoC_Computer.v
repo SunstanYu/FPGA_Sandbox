@@ -1015,6 +1015,17 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                         end
                     end
 
+                    // ===========================
+                    // FIRE flame layers (visual only): decay each frame so they
+                    // must be re-marked by an active fire source to remain visible.
+                    // BACK was cleared in S_CLEAR, so skipping the writeback erases them.
+                    // ===========================
+                    MAT_FIRE_1, MAT_FIRE_2, MAT_FIRE_3,
+                    MAT_FIRE_4, MAT_FIRE_5, MAT_FIRE_6,
+                    MAT_FIRE_7, MAT_FIRE_8, MAT_FIRE_9: begin
+                        state <= S_NEXT_PIXEL;
+                    end
+
                     default: begin
                         ca_we         <= 1'b1;
                         ca_write_addr <= (cy * GRID_WIDTH) + cx;
@@ -1335,8 +1346,13 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
                     state         <= S_NEXT_PIXEL;
+                end else if (ca_read_data == MAT_FIRE || ca_read_data >= MAT_FIRE_1) begin
+                    // Fire/flame below -> redundant fire pixel, disappear so multi-pixel
+                    // brushes collapse to a single falling spark instead of stacking.
+                    ca_we         <= 1'b0;
+                    state         <= S_NEXT_PIXEL;
                 end else begin
-                    // Solid or fire below -> stay in place (FIRE), start marking flame layers
+                    // Solid (sand/wall) below -> stay in place (FIRE), start marking flame layers
                     ca_we         <= 1'b1;
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
@@ -1360,8 +1376,11 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             S_FIRE_MARK_EV: begin
-                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
-                    // Empty or smoke → write flame layer
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE ||
+                    ca_read_data >= MAT_FIRE_1) begin
+                    // Empty/smoke/existing flame layer → overwrite. Overwriting flame
+                    // layers is needed because they decay each frame (BACK is cleared)
+                    // and remain visible only if the source re-marks them.
                     ca_we         <= 1'b1;
                     ca_write_addr <= ((cy - fire_mark_layer) * GRID_WIDTH) + cx;
                     if (fire_mark_layer <= 4'd1)
