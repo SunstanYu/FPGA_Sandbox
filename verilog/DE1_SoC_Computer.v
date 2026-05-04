@@ -305,18 +305,20 @@ wire        ca_we_mux   = ca_we;
 wire [16:0] ca_addr_mux = ca_write_addr;
 wire [3:0]  ca_data_mux = ca_write_data;
 
-// Fire brush priority: if painting FIRE onto WALL/SAND/WATER, skip the write
+// Fire brush priority: if painting FIRE onto blocked/burning cells, skip the write
 // Use vga_data_out (from Port A, the displayed buffer) to check current value
-// If paint FIRE onto WALL/SAND/WATER/WATER_ACTIVE → block the write
+// If paint FIRE onto WALL/SAND/WATER/WATER_ACTIVE/FIRE/FIRE_* -> block the write
 
 // Final merge: brush_we_edge overrides CA (user intent > physics)
-// But if painting FIRE onto WALL/SAND/WATER, block it
+// But if painting FIRE onto blocked/burning cells, block it
 wire is_fire_brush = (brush_data_sync == MAT_FIRE);
 wire is_blocked_for_fire = is_fire_brush & (
     (vga_data_out == MAT_WALL) |
     (vga_data_out == MAT_SAND) |
     (vga_data_out == MAT_WATER) |
-    (vga_data_out == MAT_WATER_ACTIVE)
+    (vga_data_out == MAT_WATER_ACTIVE) |
+    (vga_data_out == MAT_FIRE) |
+    (vga_data_out >= MAT_FIRE_1)
 );
 
 wire brush_allowed = brush_we_edge & ~is_blocked_for_fire;
@@ -423,8 +425,8 @@ begin
                 fire_color = 8'b000_000_00;  // black
         end
     end else begin
-        // Inner flame (1-3): static dark red, no animation
-        fire_color = 8'b000_000_11;
+        // Inner flame (1-3): static orange core, no animation
+        fire_color = 8'b111_100_00;
     end
 end
 endfunction
@@ -440,13 +442,13 @@ always @(*) begin
         MAT_SMOKE: grid_color = visual_anim_ctr[2] ? 8'b110_110_11 : 8'b100_100_10;
         MAT_FIRE_1,
         MAT_FIRE_2,
-        MAT_FIRE_3:             grid_color = 8'b000_000_11; // Inner flame - dark red, static
+        MAT_FIRE_3,
         MAT_FIRE_4,
         MAT_FIRE_5,
         MAT_FIRE_6,
         MAT_FIRE_7,
         MAT_FIRE_8,
-        MAT_FIRE_9:             grid_color = fire_color(vga_data_out - 4'd6, visual_anim_ctr); // Mid/outer flame
+        MAT_FIRE_9:             grid_color = fire_color(vga_data_out - 4'd6, visual_anim_ctr);
         default:   grid_color = 8'b000_000_00;
     endcase
 end
@@ -1326,8 +1328,15 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     // Water below → extinguish, disappear
                     ca_we         <= 1'b0;
                     state         <= S_NEXT_PIXEL;
+                end else if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    // Empty/smoke below -> fall. The current cell remains empty because
+                    // the BACK buffer was cleared before this sweep.
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_FIRE;
+                    state         <= S_NEXT_PIXEL;
                 end else begin
-                    // Not water below → stay in place (FIRE), start marking flame layers
+                    // Solid or fire below -> stay in place (FIRE), start marking flame layers
                     ca_we         <= 1'b1;
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
