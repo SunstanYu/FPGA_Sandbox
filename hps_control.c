@@ -155,22 +155,16 @@ int main(void)
 				signed char dy = (signed char)mbuf[2];
 				mouse_acc = 0;
 
-				if (middle && !prev_middle) {
-					int cx, cy;
-					printf("\n[!!!] NUCLEAR WIPE (canvas only) [!!!]\n");
-					for (cy = 0; cy < CANVAS_H; cy++) {
-						for (cx = 0; cx < 320; cx++) {
-							*(brush_x_ptr)   = (unsigned int)cx;
-							*(brush_y_ptr)   = (unsigned int)cy;
-							*(brush_mat_ptr) = (unsigned int)MAT_EMPTY;
-							__sync_synchronize();
-							*(brush_we_ptr)  = 1;
-							(void)*(brush_we_ptr);
-							*(brush_we_ptr)  = 0;
-						}
-					}
-					printf(">>> CANVAS CLEARED! <<<\n\n");
-				}
+			if (middle && !prev_middle) {
+				// 清屏指令：y=250 是鼠标永远不可达的坐标，FPGA 端识别为清屏信号
+				*(brush_mat_ptr) = (unsigned int)5; // MAT_SMOKE as sentinel
+				*(brush_x_ptr)   = (unsigned int)0;
+				*(brush_y_ptr)   = (unsigned int)250;
+				__sync_synchronize();
+				*(brush_we_ptr)  = 1;
+				(void)*(brush_we_ptr);
+				*(brush_we_ptr)  = 0;
+			}
 				prev_middle = middle;
 
 				if (dx != 0 || dy != 0) {

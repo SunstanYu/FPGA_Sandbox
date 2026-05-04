@@ -216,6 +216,16 @@ parameter MAT_WALL  = 4'd3;
 parameter MAT_WATER_ACTIVE = 4'd6; // Active/spreading water state
 parameter MAT_FIRE  = 4'd4;
 parameter MAT_SMOKE = 4'd5;
+// Fire flame layers: 9 unique values (7-15), 第10层也复用 15
+parameter MAT_FIRE_1  = 4'd7;   // 内焰第1层
+parameter MAT_FIRE_2  = 4'd8;   // 内焰第2层
+parameter MAT_FIRE_3  = 4'd9;   // 内焰第3层
+parameter MAT_FIRE_4  = 4'd10;  // 中焰第1层
+parameter MAT_FIRE_5  = 4'd11;  // 中焰第2层
+parameter MAT_FIRE_6  = 4'd12;  // 中焰第3层
+parameter MAT_FIRE_7  = 4'd13;  // 中焰第4层
+parameter MAT_FIRE_8  = 4'd14;  // 外焰第1层
+parameter MAT_FIRE_9  = 4'd15;  // 外焰第2层（第9/10层复用此值）
 
 // VGA -> Grid coordinate mapping (640x480 -> 320x240, divide by 2)
 wire [8:0] grid_read_x = next_x[9:1]; 
@@ -264,13 +274,23 @@ end
 reg         [16:0] brush_addr_sync;
 reg         [3:0]  brush_data_sync;
 
+// Clear trigger: HPS sends brush at y=250 with brush_mat=5 (sentinel)
+// VGA scanline y=250 is outside visible area, so this write is off-screen
+// In verilog: brush_y is 10-bit (0-1023), 250 maps to grid y=250
+reg         clear_pending;
+
 always @(posedge M10k_pll or negedge sys_reset_n) begin
     if (!sys_reset_n) begin
         brush_addr_sync <= 17'd0;
         brush_data_sync <= 4'd0;
+        clear_pending   <= 1'b0;
     end else begin
         brush_addr_sync <= hps_write_addr;
         brush_data_sync <= brush_mat;
+        // Clear trigger: HPS writes y=250 with brush_mat=5 as sentinel
+        // Address = 250*320 = 80000 >= MAX_CELLS(76800), so out-of-bounds
+        if (brush_we_edge && (brush_mat == MAT_SMOKE) && (hps_write_addr >= MAX_CELLS))
+            clear_pending <= 1'b1;
     end
 end
 
@@ -279,10 +299,24 @@ wire        ca_we_mux   = ca_we;
 wire [16:0] ca_addr_mux = ca_write_addr;
 wire [3:0]  ca_data_mux = ca_write_data;
 
+// Fire brush priority: if painting FIRE onto WALL/SAND/WATER, skip the write
+// Use vga_data_out (from Port A, the displayed buffer) to check current value
+// If paint FIRE onto WALL/SAND/WATER/WATER_ACTIVE → block the write
+
 // Final merge: brush_we_edge overrides CA (user intent > physics)
-wire        we_final   = brush_we_edge ? 1'b1    : ca_we_mux;
-wire [16:0] addr_final = brush_we_edge ? brush_addr_sync : ca_addr_mux;
-wire [3:0]  data_final = brush_we_edge ? brush_data_sync  : ca_data_mux;
+// But if painting FIRE onto WALL/SAND/WATER, block it
+wire is_fire_brush = (brush_data_sync == MAT_FIRE);
+wire is_blocked_for_fire = is_fire_brush & (
+    (vga_data_out == MAT_WALL) |
+    (vga_data_out == MAT_SAND) |
+    (vga_data_out == MAT_WATER) |
+    (vga_data_out == MAT_WATER_ACTIVE)
+);
+
+wire brush_allowed = brush_we_edge & ~is_blocked_for_fire;
+wire        we_final   = brush_allowed ? 1'b1    : ca_we_mux;
+wire [16:0] addr_final = brush_allowed ? brush_addr_sync : ca_addr_mux;
+wire [3:0]  data_final = brush_allowed ? brush_data_sync  : ca_data_mux;
 
 // -------------------------------------------------------
 // Dual-port routing
@@ -326,6 +360,7 @@ assign ca_read_data = (active_buffer == 1'b0) ? ca_q_A : ca_q_B;
 // VGA Color Mapper
 //=======================================================
 // Fire and smoke animation is display-only; physics stores only MAT_*
+// fire_anim uses visual_anim_ctr for synchronized animation across all fire cells
 reg [19:0] visual_anim_div;
 reg [3:0]  visual_anim_ctr;
 always @(posedge M10k_pll or negedge sys_reset_n) begin
@@ -340,15 +375,72 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 end
 
 reg [7:0] grid_color;
+
+// Fire animation helper: compute color for a flame layer
+// Uses visual_anim_ctr for synchronized animation across all fire cells
+// Layer index (1-9): 1-3=inner, 4-7=mid, 8-9=outer
+// Animation cycle (ctr 0-7): layers progressively go dark from top, then re-light from bottom
+function [7:0] fire_color;
+    input [3:0] layer;  // fire layer index (1=FIRE_1, ..., 9=FIRE_9)
+    input [3:0] ctr;    // animation counter (0-15 cycles)
+    reg [3:0] dark_start;
+begin
+    if (layer >= 4 && layer <= 7) begin
+        // Mid flame (4 layers): goes dark at different rates based on position
+        // Each layer has a different threshold to go black
+        dark_start = 8 - layer;
+        // Phase 1 (ctr 0-7): go dark; Phase 2 (ctr 8-15): recovery
+        if (ctr < 8) begin
+            // Darkness spreads from top (layer 7) to bottom (layer 4)
+            if (layer < ctr + 4'd4)
+                fire_color = 8'b000_000_00;  // black
+            else
+                fire_color = 8'b111_010_00;  // light red
+        end else begin
+            // Recovery: light reclaims from bottom (layer 4) to top (layer 7)
+            if (layer < (ctr - 4'd8) + 4'd4)
+                fire_color = 8'b111_010_00;  // light red
+            else
+                fire_color = 8'b000_000_00;  // black (not yet recovered)
+        end
+    end else if (layer >= 8 && layer <= 9) begin
+        // Outer flame (2 layers): same pattern but more aggressive
+        if (ctr < 8) begin
+            if (layer < ctr + 4'd6)
+                fire_color = 8'b000_000_00;  // black
+            else
+                fire_color = 8'b111_100_11;  // pink
+        end else begin
+            if (layer < (ctr - 4'd8) + 4'd6)
+                fire_color = 8'b111_100_11;  // pink
+            else
+                fire_color = 8'b000_000_00;  // black
+        end
+    end else begin
+        // Inner flame (1-3): static dark red, no animation
+        fire_color = 8'b000_000_11;
+    end
+end
+endfunction
+
 always @(*) begin
     case(vga_data_out)
         MAT_EMPTY: grid_color = 8'b000_000_00; // Black
         MAT_SAND:  grid_color = 8'b111_110_00; // Yellow
         MAT_WATER: grid_color = 8'b000_010_11; // Blue
-        MAT_WATER_ACTIVE: grid_color = 8'b000_111_11; // Light blue for debug active water
+        MAT_WATER_ACTIVE: grid_color = 8'b000_111_11; // Light blue
         MAT_WALL:  grid_color = 8'b011_011_01; // Gray
-        MAT_FIRE:  grid_color = visual_anim_ctr[1] ? 8'b111_010_01 : 8'b111_000_00;
+        MAT_FIRE:  grid_color = 8'b111_000_00; // Fire source - bright red
         MAT_SMOKE: grid_color = visual_anim_ctr[2] ? 8'b110_110_11 : 8'b100_100_10;
+        MAT_FIRE_1,
+        MAT_FIRE_2,
+        MAT_FIRE_3:             grid_color = 8'b000_000_11; // Inner flame - dark red, static
+        MAT_FIRE_4,
+        MAT_FIRE_5,
+        MAT_FIRE_6,
+        MAT_FIRE_7,
+        MAT_FIRE_8,
+        MAT_FIRE_9:             grid_color = fire_color(vga_data_out - 4'd6, visual_anim_ctr); // Mid/outer flame
         default:   grid_color = 8'b000_000_00;
     endcase
 end
@@ -708,17 +800,14 @@ localparam S_IDLE        = 6'd0,
            S_WATR_S2_SUP_WT  = 6'd20,
            S_WATR_S2_SUP_EV  = 6'd21,
            S_NEXT_PIXEL      = 6'd22,
-           // Fire + Smoke states
-           S_FIRE_DN_WT      = 6'd23,
-           S_FIRE_DN_EV      = 6'd24,
-           S_FIRE_DIAG_WT    = 6'd25,
-           S_FIRE_DIAG_EV    = 6'd26,
-           S_FIRE_SIDE1_WT   = 6'd27,
-           S_FIRE_SIDE1_EV   = 6'd28,
-           S_SMK_UP_WT       = 6'd29,
-           S_SMK_UP_EV       = 6'd30,
-           S_SMK_DIAG_WT     = 6'd31,
-           S_SMK_DIAG_EV     = 6'd32;
+           S_FIRE_EVAL       = 6'd23,
+           S_FIRE_MARK_WT    = 6'd24,  // wait for read of flame cell
+           S_FIRE_MARK_EV    = 6'd25,  // evaluate and write flame layer
+           S_SMK_UP_WT       = 6'd26,
+           S_SMK_UP_EV       = 6'd27,
+           S_SMK_DIAG_WT     = 6'd28,
+           S_SMK_DIAG_EV     = 6'd29,
+           S_CLEAR_AGAIN     = 6'd30;  // second pass to clear old FRONT buffer
 
 reg [5:0]  state;
 reg [16:0] clear_addr;
@@ -726,6 +815,8 @@ reg [9:0]  cx;
 reg [9:0]  cy;
 reg [3:0]  current_mat;
 reg        rnd;           // LFSR sample for priority direction
+// Fire flame marking: layer counter and pending flag
+reg [3:0]  fire_mark_layer;   // 0=idle, 1-9 = writing FIRE_1 through FIRE_9
 
 reg prev_vsync;
 wire vsync_falling_edge = (prev_vsync == 1'b1 && VGA_VS == 1'b0);
@@ -777,17 +868,39 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             // ==================================================
             // S_CLEAR: Fill BACK buffer with EMPTY
+            // Normal: after clear, do sweep (copy physics from FRONT)
+            // clear_pending: after clear, skip sweep → keep BACK empty,
+            //   then next VSYNC swap makes both buffers empty
             // ==================================================
             S_CLEAR: begin
                 ca_we         <= 1'b1;
                 ca_write_addr <= clear_addr;
                 ca_write_data <= MAT_EMPTY;
                 if (clear_addr == MAX_CELLS - 17'd1) begin
-                    cx    <= 10'd0;
-                    cy    <= CANVAS_ROWS - 10'd1;
-                    state <= S_SWEEP_READ;
+                    clear_addr <= 17'd0;
+                    cx         <= 10'd0;
+                    cy         <= CANVAS_ROWS - 10'd1;
+                    if (clear_pending) begin
+                        clear_pending <= 1'b0;
+                        // Next VSYNC: BACK is still dirty from old FRONT,
+                        // so clear again on the very next frame
+                        state         <= S_CLEAR_AGAIN;
+                    end else begin
+                        state         <= S_SWEEP_READ;
+                    end
                 end else begin
                     clear_addr <= clear_addr + 17'd1;
+                end
+            end
+
+            // ==================================================
+            // S_CLEAR_AGAIN: Second pass to clear old FRONT buffer
+            // ==================================================
+            S_CLEAR_AGAIN: begin
+                if (vsync_falling_edge) begin
+                    active_buffer <= ~active_buffer;  // swap dirty FRONT to BACK
+                    clear_addr <= 17'd0;              // now BACK is the old dirty FRONT
+                    state      <= S_CLEAR;            // fill BACK with EMPTY
                 end
             end
 
@@ -865,19 +978,20 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end
 
                     // ===========================
-                    // FIRE physics
+                    // FIRE physics (simplified: no diffusion)
                     // ===========================
                     MAT_FIRE: begin
                         if (cy == CANVAS_ROWS - 10'd1) begin
-                            if (random_bit) begin
-                                ca_we         <= 1'b1;
-                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                                ca_write_data <= MAT_FIRE;
-                            end
-                            state <= S_NEXT_PIXEL;
+                            // Bottom row: stay in place, start marking flame layers above
+                            ca_we         <= 1'b1;
+                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_write_data <= MAT_FIRE;
+                            fire_mark_layer <= 4'd1;
+                            state <= S_FIRE_MARK_WT;
                         end else begin
+                            // Read cell below to check if water extinguishes
                             ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
-                            state        <= S_FIRE_DN_WT;
+                            state        <= S_FIRE_EVAL;
                         end
                     end
 
@@ -1200,107 +1314,70 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             // ==================================================
-            // FIRE physics (new)
+            // FIRE physics (simplified: no diffusion)
             // ==================================================
-            S_FIRE_DN_WT: state <= S_FIRE_DN_EV;
-
-            S_FIRE_DN_EV: begin
-                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
-                    // Fire falls through empty/smoke
-                    ca_we         <= 1'b1;
-                    ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
-                    ca_write_data <= MAT_FIRE;
-                    state         <= S_NEXT_PIXEL;
-                end else if (ca_read_data == MAT_WATER || ca_read_data == MAT_WATER_ACTIVE) begin
-                    // Water extinguishes — disappear
-                    state <= S_NEXT_PIXEL;
-                end else begin
-                    // Blocked → try diagonal
-                    if (rnd == 1'b0) begin
-                        if (cx == 10'd0) begin
-                            if (cx == GRID_WIDTH - 10'd1) begin
-                                ca_we         <= 1'b1;
-                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                                ca_write_data <= MAT_FIRE;
-                                state         <= S_NEXT_PIXEL;
-                            end else begin
-                                ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
-                                state        <= S_FIRE_DIAG_WT;
-                            end
-                        end else begin
-                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
-                            state        <= S_FIRE_DIAG_WT;
-                        end
-                    end else begin
-                        if (cx == GRID_WIDTH - 10'd1) begin
-                            if (cx == 10'd0) begin
-                                ca_we         <= 1'b1;
-                                ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                                ca_write_data <= MAT_FIRE;
-                                state         <= S_NEXT_PIXEL;
-                            end else begin
-                                ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
-                                state        <= S_FIRE_DIAG_WT;
-                            end
-                        end else begin
-                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
-                            state        <= S_FIRE_DIAG_WT;
-                        end
-                    end
-                end
-            end
-
-            S_FIRE_DIAG_WT: state <= S_FIRE_DIAG_EV;
-
-            S_FIRE_DIAG_EV: begin
-                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
-                    ca_we         <= 1'b1;
-                    ca_write_data <= MAT_FIRE;
-                    ca_write_addr <= ca_read_addr; // already computed
+            S_FIRE_EVAL: begin
+                if (ca_read_data == MAT_WATER || ca_read_data == MAT_WATER_ACTIVE) begin
+                    // Water below → extinguish, disappear
+                    ca_we         <= 1'b0;
                     state         <= S_NEXT_PIXEL;
                 end else begin
-                    // Diagonal blocked → try side spread
-                    // Note: side spread is same-level (same y)
-                    if (rnd == 1'b0) begin
-                        // Try left
-                        if (cx == 10'd0) begin
-                            ca_we         <= 1'b1;
-                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                            ca_write_data <= MAT_FIRE;
-                            state         <= S_NEXT_PIXEL;
-                        end else begin
-                            ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
-                            state        <= S_FIRE_SIDE1_WT;
-                        end
-                    end else begin
-                        // Try right
-                        if (cx == GRID_WIDTH - 10'd1) begin
-                            ca_we         <= 1'b1;
-                            ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                            ca_write_data <= MAT_FIRE;
-                            state         <= S_NEXT_PIXEL;
-                        end else begin
-                            ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
-                            state        <= S_FIRE_SIDE1_WT;
-                        end
-                    end
-                end
-            end
-
-            S_FIRE_SIDE1_WT: state <= S_FIRE_SIDE1_EV;
-
-            S_FIRE_SIDE1_EV: begin
-                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
-                    ca_we         <= 1'b1;
-                    ca_write_addr <= ca_read_addr;
-                    ca_write_data <= MAT_FIRE;
-                    state         <= S_NEXT_PIXEL;
-                end else begin
-                    // Side also blocked → burn in place
+                    // Not water below → stay in place (FIRE), start marking flame layers
                     ca_we         <= 1'b1;
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
-                    state         <= S_NEXT_PIXEL;
+                    fire_mark_layer <= 4'd1;
+                    state         <= S_FIRE_MARK_WT;
+                end
+            end
+
+            // ==================================================
+            // FIRE flame marking (iteratively writes FIRE_1..FIRE_9 upward)
+            // ==================================================
+            S_FIRE_MARK_WT: begin
+                // Read cell above at current fire_mark_layer offset to check if it's empty
+                if (cy < fire_mark_layer) begin
+                    // Above canvas edge (y=0) — stop marking
+                    state <= S_NEXT_PIXEL;
+                end else begin
+                    ca_read_addr <= ((cy - fire_mark_layer) * GRID_WIDTH) + cx;
+                    state        <= S_FIRE_MARK_EV;
+                end
+            end
+
+            S_FIRE_MARK_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
+                    // Empty or smoke → write flame layer
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= ((cy - fire_mark_layer) * GRID_WIDTH) + cx;
+                    if (fire_mark_layer <= 4'd1)
+                        ca_write_data <= MAT_FIRE_1;       // inner flame
+                    else if (fire_mark_layer <= 4'd2)
+                        ca_write_data <= MAT_FIRE_2;       // inner flame
+                    else if (fire_mark_layer <= 4'd3)
+                        ca_write_data <= MAT_FIRE_3;       // inner flame 3
+                    else if (fire_mark_layer <= 4'd4)
+                        ca_write_data <= MAT_FIRE_4;       // mid flame 1
+                    else if (fire_mark_layer <= 4'd5)
+                        ca_write_data <= MAT_FIRE_5;       // mid flame 2
+                    else if (fire_mark_layer <= 4'd6)
+                        ca_write_data <= MAT_FIRE_6;       // mid flame 3
+                    else if (fire_mark_layer <= 4'd7)
+                        ca_write_data <= MAT_FIRE_7;       // mid flame 4
+                    else if (fire_mark_layer <= 4'd8)
+                        ca_write_data <= MAT_FIRE_8;       // outer flame 1
+                    else
+                        ca_write_data <= MAT_FIRE_9;       // outer flame 2+3
+                    fire_mark_layer <= fire_mark_layer + 4'd1;
+                    if (fire_mark_layer >= 4'd9) begin
+                        // Done after writing layer 9
+                        state <= S_NEXT_PIXEL;
+                    end else begin
+                        state <= S_FIRE_MARK_WT;
+                    end
+                end else begin
+                    // Blocked (wall/sand/water/other fire) → stop marking
+                    state <= S_NEXT_PIXEL;
                 end
             end
 
