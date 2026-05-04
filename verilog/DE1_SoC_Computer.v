@@ -1044,7 +1044,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             S_SAND_DN_WT: state <= S_SAND_DN_EV;
 
             S_SAND_DN_EV: begin
-                if (ca_read_data == MAT_EMPTY) begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_FIRE || ca_read_data >= MAT_FIRE_1) begin
                     ca_we         <= 1'b1;
                     ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_SAND;
@@ -1101,7 +1101,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             S_SAND_DG1_WT: state <= S_SAND_DG1_EV;
 
             S_SAND_DG1_EV: begin
-                if (ca_read_data == MAT_EMPTY) begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_FIRE || ca_read_data >= MAT_FIRE_1) begin
                     ca_we         <= 1'b1;
                     ca_write_data <= MAT_SAND;
                     ca_write_addr <= (rnd == 1'b0)
@@ -1136,7 +1136,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             S_SAND_DG2_WT: state <= S_SAND_DG2_EV;
 
             S_SAND_DG2_EV: begin
-                if (ca_read_data == MAT_EMPTY) begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_FIRE || ca_read_data >= MAT_FIRE_1) begin
                     ca_we         <= 1'b1;
                     ca_write_data <= MAT_SAND;
                     ca_write_addr <= (rnd == 1'b0)
@@ -1160,7 +1160,8 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                 if (current_mat == MAT_WATER) begin
                     if (ca_read_data == MAT_EMPTY ||
                         ca_read_data == MAT_SMOKE ||
-                        ca_read_data == MAT_FIRE) begin
+                        ca_read_data == MAT_FIRE ||
+                        ca_read_data >= MAT_FIRE_1) begin
                         // Normal water falls straight down.
                         ca_we         <= 1'b1;
                         ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
@@ -1184,7 +1185,8 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     // therefore never spread over an uneven water surface.
                     if (ca_read_data == MAT_EMPTY ||
                         ca_read_data == MAT_SMOKE ||
-                        ca_read_data == MAT_FIRE) begin
+                        ca_read_data == MAT_FIRE ||
+                        ca_read_data >= MAT_FIRE_1) begin
                         // If unsupported, keep falling and remain active.
                         ca_we         <= 1'b1;
                         ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
@@ -1230,7 +1232,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             S_WATR_S1_WT: state <= S_WATR_S1_EV;
 
             S_WATR_S1_EV: begin
-                if (ca_read_data == MAT_EMPTY) begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_FIRE || ca_read_data >= MAT_FIRE_1) begin
                     // Side cell is empty. Now check whether the side cell is supported below.
                     ca_read_addr <= (rnd == 1'b0)
                         ? ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1)
@@ -1302,7 +1304,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             S_WATR_S2_WT: state <= S_WATR_S2_EV;
 
             S_WATR_S2_EV: begin
-                if (ca_read_data == MAT_EMPTY) begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_FIRE || ca_read_data >= MAT_FIRE_1) begin
                     ca_read_addr <= (rnd == 1'b0)
                         ? ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1)
                         : ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
