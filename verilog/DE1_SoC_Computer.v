@@ -1348,8 +1348,10 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             S_FIRE_EVAL: begin
                 if (ca_read_data == MAT_WATER || ca_read_data == MAT_WATER_ACTIVE) begin
-                    // Water below → extinguish, disappear
-                    ca_we         <= 1'b0;
+                    // Water below → extinguish, produce smoke at fire origin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_SMOKE;
                     state         <= S_NEXT_PIXEL;
                 end else if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
                     // Empty/smoke below -> fall. The current cell remains empty because
