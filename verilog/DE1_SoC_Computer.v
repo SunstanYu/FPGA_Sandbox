@@ -915,7 +915,10 @@ localparam S_IDLE        = 6'd0,
 
 // Grass physics states (simplified: no diagonal sliding)
 localparam S_GRASS_DN_WT  = 6'd33,
-           S_GRASS_DN_EV  = 6'd34;
+           S_GRASS_DN_EV        = 6'd34,
+           S_FIRE_SPREAD_INIT   = 6'd35,
+           S_FIRE_SPREAD_WT     = 6'd36,
+           S_FIRE_SPREAD_EV     = 6'd37;
 
 reg [5:0]  state;
 reg [16:0] clear_addr;
@@ -925,6 +928,8 @@ reg [4:0]  current_mat;
 reg        rnd;           // LFSR sample for priority direction
 // Fire flame marking: layer counter and pending flag
 reg [3:0]  fire_mark_layer;   // 0=idle, 1-9 = writing FIRE_1 through FIRE_9
+reg        fire_on_grass;     // flag set when fire sits on grass, triggers spread
+reg [ 1:0] spread_dir;        // current spread direction 0=left,1=right,2=bottom-left,3=bottom-right
 
 reg prev_vsync;
 wire vsync_falling_edge = (prev_vsync == 1'b1 && VGA_VS == 1'b0);
@@ -990,6 +995,8 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     clear_addr <= 17'd0;
                     cx         <= 10'd0;
                     cy         <= CANVAS_ROWS - 10'd1;
+                    fire_on_grass <= 1'b0;
+                    spread_dir    <= 2'd0;
                     if (clear_pending) begin
                         // Next VSYNC: BACK is still dirty from old FRONT,
                         // so clear again on the very next frame
@@ -1465,6 +1472,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             S_FIRE_DN_WT: state <= S_FIRE_EVAL;
 
             S_FIRE_EVAL: begin
+                fire_on_grass <= 1'b0;
                 if (ca_read_data == MAT_WATER || ca_read_data == MAT_WATER_ACTIVE) begin
                     // Water below → extinguish, produce smoke at fire origin
                     ca_we         <= 1'b1;
@@ -1490,6 +1498,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
                     fire_mark_layer <= 4'd1;
+                    if (ca_read_data == MAT_GRASS_STATIC) fire_on_grass <= 1'b1;
                     state         <= S_FIRE_MARK_WT;
                 end
             end
@@ -1501,6 +1510,8 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                 // Read cell above at current fire_mark_layer offset to check if it's empty
                 if (cy < fire_mark_layer) begin
                     // Above canvas edge (y=0) — stop marking
+                    fire_on_grass <= 1'b0;
+                    spread_dir    <= 2'd0;
                     state <= S_NEXT_PIXEL;
                 end else begin
                     ca_read_addr <= ((cy - fire_mark_layer) * GRID_WIDTH) + cx;
@@ -1540,12 +1551,14 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     fire_mark_layer <= fire_mark_layer + 4'd1;
                     if (fire_mark_layer >= 4'd9) begin
                         // Done after writing layer 9
-                        state <= S_NEXT_PIXEL;
+                        state <= fire_on_grass ? S_FIRE_SPREAD_INIT : S_NEXT_PIXEL;
                     end else begin
                         state <= S_FIRE_MARK_WT;
                     end
-                end else begin
+                 end else begin
                     // Blocked (wall/sand/water/other fire) → stop marking
+                    fire_on_grass <= 1'b0;
+                    spread_dir    <= 2'd0;
                     state <= S_NEXT_PIXEL;
                 end
             end
@@ -1639,6 +1652,81 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     // Do NOT write back -> grass vanishes.
                     state <= S_NEXT_PIXEL;
                 end
+            end
+
+            // ==================================================
+            // FIRE SPREAD: loop 4 directions from fire cell (cx, cy)
+            // Dir 0 (Left: same row, cx-1)
+            // Dir 1 (Right: same row, cx+1)
+            // Dir 2 (Bottom-Left: cy+1, cx-1)
+            // Dir 3 (Bottom-Right: cy+1, cx+1)
+            // ==================================================
+            S_FIRE_SPREAD_INIT: begin
+                spread_dir <= 2'd0;
+                // Dir 0: Left (same row, cx-1), dummy to current if cx==0
+                if (cx == 10'd0)
+                    ca_read_addr <= (cy * GRID_WIDTH) + cx;
+                else
+                    ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                state <= S_FIRE_SPREAD_WT;
+            end
+
+            S_FIRE_SPREAD_WT: begin
+                state <= S_FIRE_SPREAD_EV;
+            end
+
+            S_FIRE_SPREAD_EV: begin
+                // Optionally ignite
+                if (ca_read_data == MAT_GRASS_STATIC && lfsr[1:0] == 2'b00) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= ca_read_addr;
+                    ca_write_data <= MAT_FIRE;
+                end else begin
+                    ca_we <= 1'b0;
+                end
+
+                // Increment spread_dir and set next read addr
+                case (spread_dir)
+                    2'd0: begin
+                        // Dir 1: Right (same row, cx+1), dummy if cx==319
+                        spread_dir <= 2'd1;
+                        if (cx == 10'd319)
+                            ca_read_addr <= (cy * GRID_WIDTH) + cx;
+                        else
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
+                        state <= S_FIRE_SPREAD_WT;
+                    end
+                    2'd1: begin
+                        // Dir 2: Bottom-Left (cy+1, cx-1), dummy if cx==0 or cy==199
+                        spread_dir <= 2'd2;
+                        if (cx == 10'd0 || cy == 10'd199)
+                            ca_read_addr <= (cy * GRID_WIDTH) + cx;
+                        else
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
+                        state <= S_FIRE_SPREAD_WT;
+                    end
+                    2'd2: begin
+                        // Dir 3: Bottom-Right (cy+1, cx+1), dummy if cx==319 or cy==199
+                        spread_dir <= 2'd3;
+                        if (cx == 10'd319 || cy == 10'd199)
+                            ca_read_addr <= (cy * GRID_WIDTH) + cx;
+                        else
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                        state <= S_FIRE_SPREAD_WT;
+                    end
+                    2'd3: begin
+                        // Done - all 4 directions checked
+                        fire_on_grass <= 1'b0;
+                        spread_dir    <= 2'd0;
+                        state <= S_NEXT_PIXEL;
+                    end
+                    default: begin
+                        fire_on_grass <= 1'b0;
+                        spread_dir    <= 2'd0;
+                        ca_we         <= 1'b0;
+                        state <= S_NEXT_PIXEL;
+                    end
+                endcase
             end
 
             // ==================================================
