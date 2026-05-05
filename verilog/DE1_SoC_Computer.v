@@ -227,8 +227,9 @@ parameter MAT_FIRE_7  = 5'd13;
 parameter MAT_FIRE_8  = 5'd14;
 parameter MAT_FIRE_9  = 5'd15;
 // New solid materials
-parameter MAT_GRASS   = 5'd16;  // Grass block (falls like sand, vanishes if no dirt below)
-parameter MAT_DIRT    = 5'd17;  // Dirt block (static, like wall)
+parameter MAT_GRASS        = 5'd16;  // Grass block (falls, becomes MAT_GRASS_STATIC on dirt)
+parameter MAT_DIRT         = 5'd17;  // Dirt block (static, like wall)
+parameter MAT_GRASS_STATIC = 5'd18;  // Static grass (resting on dirt, or placed like dirt)
 
 // VGA -> Grid coordinate mapping (640x480 -> 320x240, divide by 2)
 wire [8:0] grid_read_x = next_x[9:1]; 
@@ -458,6 +459,7 @@ always @(*) begin
         MAT_FIRE_8,
         MAT_FIRE_9:             grid_color = fire_color(vga_data_out[3:0] - 4'd6, visual_anim_ctr + {grid_read_x[2:0], 1'b0});
         MAT_GRASS: grid_color = 8'b011_111_10; // Bright green
+        MAT_GRASS_STATIC: grid_color = 8'b010_110_01; // Darker green (settled grass)
         MAT_DIRT:  grid_color = 8'b100_011_00; // Brown
         default:   grid_color = 8'b000_000_00;
     endcase
@@ -911,13 +913,9 @@ localparam S_IDLE        = 6'd0,
            S_FIRE_DN_WT      = 6'd31,  // extra wait so M10K read of cell-below settles before S_FIRE_EVAL
            S_FIRE_MARK_WT2   = 6'd32;  // extra wait so M10K read of cell-above settles before S_FIRE_MARK_EV
 
-// Grass physics states
+// Grass physics states (simplified: no diagonal sliding)
 localparam S_GRASS_DN_WT  = 6'd33,
-           S_GRASS_DN_EV  = 6'd34,
-           S_GRASS_DG1_WT = 6'd35,
-           S_GRASS_DG1_EV = 6'd36,
-           S_GRASS_DG2_WT = 6'd37,
-           S_GRASS_DG2_EV = 6'd38;
+           S_GRASS_DN_EV  = 6'd34;
 
 reg [5:0]  state;
 reg [16:0] clear_addr;
@@ -945,7 +943,8 @@ function is_supported_for_water;
     begin
         is_supported_for_water = (m == MAT_WALL || m == MAT_SAND ||
                                   m == MAT_WATER || m == MAT_WATER_ACTIVE ||
-                                  m == MAT_GRASS || m == MAT_DIRT);
+                                  m == MAT_GRASS || m == MAT_DIRT ||
+                                  m == MAT_GRASS_STATIC);
     end
 endfunction
 
@@ -1131,7 +1130,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end
 
                     // ===========================
-                    // GRASS physics: falls like sand, vanishes if no dirt below
+                    // GRASS physics: falls, becomes MAT_GRASS_STATIC on dirt support
                     // ===========================
                     MAT_GRASS: begin
                         if (cy == CANVAS_ROWS - 10'd1) begin
@@ -1141,6 +1140,16 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                             ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
                             state        <= S_GRASS_DN_WT;
                         end
+                    end
+
+                    // ===========================
+                    // GRASS_STATIC physics: static like wall
+                    // ===========================
+                    MAT_GRASS_STATIC: begin
+                        ca_we         <= 1'b1;
+                        ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                        ca_write_data <= MAT_GRASS_STATIC;
+                        state         <= S_NEXT_PIXEL;
                     end
 
                     default: begin
@@ -1605,6 +1614,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             // ==================================================
             // GRASS physics: falls like sand, vanishes if no dirt below
+            // Simplified: no diagonal sliding — only straight down
             // ==================================================
             S_GRASS_DN_WT: state <= S_GRASS_DN_EV;
 
@@ -1617,86 +1627,18 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_write_data <= MAT_GRASS;
                     state         <= S_NEXT_PIXEL;
                 end else if (ca_read_data == MAT_DIRT) begin
-                    // Dirt below -> grass rests on dirt, stay in place.
+                    // Dirt below -> grass rests on dirt, becomes MAT_GRASS_STATIC.
+                    // Write MAT_GRASS_STATIC at current position (cy, cx).
+                    // Do NOT overwrite the dirt cell at cy+1.
                     ca_we         <= 1'b1;
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                    ca_write_data <= MAT_GRASS;
+                    ca_write_data <= MAT_GRASS_STATIC;
                     state         <= S_NEXT_PIXEL;
                 end else begin
                     // Below is blocked by non-dirt material (sand, wall, water, grass, other).
-                    // Try diagonal slide (randomly pick left or right first).
-                    if (rnd == 1'b0) begin
-                        if (cx == 10'd0) begin
-                            // Left edge: try right-down
-                            if (cx == GRID_WIDTH - 10'd1) begin
-                                // Both edges (grid width 1): disappear
-                                state <= S_NEXT_PIXEL;
-                            end else begin
-                                ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
-                                state        <= S_GRASS_DG2_WT;
-                            end
-                        end else begin
-                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
-                            state        <= S_GRASS_DG1_WT;
-                        end
-                    end else begin
-                        if (cx == GRID_WIDTH - 10'd1) begin
-                            // Right edge: try left-down
-                            if (cx == 10'd0) begin
-                                // Both edges: disappear
-                                state <= S_NEXT_PIXEL;
-                            end else begin
-                                ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
-                                state        <= S_GRASS_DG1_WT;
-                            end
-                        end else begin
-                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
-                            state        <= S_GRASS_DG2_WT;
-                        end
-                    end
-                end
-            end
-
-            S_GRASS_DG1_WT: state <= S_GRASS_DG1_EV;
-
-            S_GRASS_DG1_EV: begin
-                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_FIRE || ca_read_data >= MAT_FIRE_1) begin
-                    // Diagonal 1 is empty -> slide there
-                    ca_we         <= 1'b1;
-                    ca_write_addr <= ca_read_addr;
-                    ca_write_data <= MAT_GRASS;
+                    // Do NOT write back -> grass vanishes.
                     state <= S_NEXT_PIXEL;
-                end else begin
-                    // First diagonal blocked -> try the other diagonal
-                    if (rnd == 1'b0) begin
-                        if (cx == GRID_WIDTH - 10'd1) begin
-                            state <= S_NEXT_PIXEL;
-                        end else begin
-                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
-                            state        <= S_GRASS_DG2_WT;
-                        end
-                    end else begin
-                        if (cx == 10'd0) begin
-                            state <= S_NEXT_PIXEL;
-                        end else begin
-                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
-                            state        <= S_GRASS_DG2_WT;
-                        end
-                    end
                 end
-            end
-
-            S_GRASS_DG2_WT: state <= S_GRASS_DG2_EV;
-
-            S_GRASS_DG2_EV: begin
-                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_FIRE || ca_read_data >= MAT_FIRE_1) begin
-                    // Diagonal 2 is empty -> slide there
-                    ca_we         <= 1'b1;
-                    ca_write_addr <= ca_read_addr;
-                    ca_write_data <= MAT_GRASS;
-                end
-                // If not empty, do NOT write back -> grass vanishes
-                state <= S_NEXT_PIXEL;
             end
 
             // ==================================================

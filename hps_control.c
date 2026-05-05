@@ -2,6 +2,7 @@
 /// DE1-SoC Cellular Automata Sandbox Controller
 /// 须与 DE1_SoC_Computer.v 中材质/画布分区一致:
 ///   MAT_SAND=1, MAT_WATER=2, MAT_WALL=3, MAT_FIRE=4, MAT_SMOKE=5
+///   MAT_GRASS=16, MAT_DIRT=17, MAT_GRASS_STATIC=18
 ///   逻辑行 y < 200 为画布; y>=200 为底栏(五槽 Wall/Water/Sand/Fire/Smoke)
 /// compile with:
 /// gcc hps_control.c -o hps_control -O2
@@ -10,6 +11,7 @@
 ///////////////////////////////////////
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -34,6 +36,7 @@
 #define MAT_SMOKE 5
 #define MAT_GRASS 16
 #define MAT_DIRT  17
+#define MAT_GRASS_STATIC 18
 
 // 与 Verilog CANVAS_H 一致：底栏 y=200..239，两行各 20 格
 #define CANVAS_H      200
@@ -69,17 +72,30 @@ static void fpga_set_brush_material(unsigned int mat) {
 void paint_to_fpga(int cx, int cy, int material)
 {
 	int half = BRUSH_SIZE / 2;
+	int is_block_material = (material == MAT_GRASS || material == MAT_DIRT);
 	int x, y;
 	for (y = cy - half; y <= cy + half; y++) {
 		for (x = cx - half; x <= cx + half; x++) {
 			if (x >= 0 && x < 320 && y >= 0 && y < CANVAS_H) {
-				*(brush_x_ptr)   = (unsigned int)x;
-				*(brush_y_ptr)   = (unsigned int)y;
-				*(brush_mat_ptr) = (unsigned int)material;
-				__sync_synchronize(); /* 全序屏障：确保 x/y/mat 全部写完后才发 we 脉冲 */
-				*(brush_we_ptr)  = 1;
-				(void)*(brush_we_ptr);
-				*(brush_we_ptr)  = 0;
+				if (is_block_material) {
+					if ((rand() % 100) < 65) { // ~65% fill chance
+						*(brush_x_ptr)   = (unsigned int)x;
+						*(brush_y_ptr)   = (unsigned int)y;
+						*(brush_mat_ptr) = (unsigned int)material;
+						__sync_synchronize(); /* 全序屏障：确保 x/y/mat 全部写完后才发 we 脉冲 */
+						*(brush_we_ptr)  = 1;
+						(void)*(brush_we_ptr);
+						*(brush_we_ptr)  = 0;
+					}
+				} else {
+					*(brush_x_ptr)   = (unsigned int)x;
+					*(brush_y_ptr)   = (unsigned int)y;
+					*(brush_mat_ptr) = (unsigned int)material;
+					__sync_synchronize(); /* 全序屏障：确保 x/y/mat 全部写完后才发 we 脉冲 */
+					*(brush_we_ptr)  = 1;
+					(void)*(brush_we_ptr);
+					*(brush_we_ptr)  = 0;
+				}
 			}
 		}
 	}
@@ -120,6 +136,9 @@ int main(void)
 	int prev_middle = 0;
 
 	fpga_set_brush_material((unsigned int)current_mat_idx);
+
+	// Seed random number generator for block material painting
+	srand((unsigned int)time(NULL));
 
 	// 启动时清空整个画布
 	printf(">>> INIT: Clearing canvas... ");
