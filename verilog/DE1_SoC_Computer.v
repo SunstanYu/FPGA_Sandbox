@@ -193,7 +193,7 @@ wire [9:0] next_y ;
 // Sandbox HPS PIO Control Wires
 wire [9:0] brush_x;
 wire [8:0] brush_y;
-wire [3:0] brush_mat;
+wire [4:0] brush_mat;
 wire       brush_we;
 wire [31:0] hw_cycle_count; 
 wire [31:0] hps_keys;
@@ -208,24 +208,27 @@ parameter GRID_HEIGHT = 10'd240;
 parameter CANVAS_ROWS = 9'd200; // Canvas area (y=0..199, toolbar is y=200..239)
 parameter MAX_CELLS   = 17'd76800; // 320 * 240
 
-// Material Definitions
-parameter MAT_EMPTY = 4'd0;
-parameter MAT_SAND  = 4'd1;
-parameter MAT_WATER = 4'd2;
-parameter MAT_WALL  = 4'd3;
-parameter MAT_WATER_ACTIVE = 4'd6; // Active/spreading water state
-parameter MAT_FIRE  = 4'd4;
-parameter MAT_SMOKE = 4'd5;
-// Fire flame layers: 9 unique values (7-15), 第10层也复用 15
-parameter MAT_FIRE_1  = 4'd7;   // 内焰第1层
-parameter MAT_FIRE_2  = 4'd8;   // 内焰第2层
-parameter MAT_FIRE_3  = 4'd9;   // 内焰第3层
-parameter MAT_FIRE_4  = 4'd10;  // 中焰第1层
-parameter MAT_FIRE_5  = 4'd11;  // 中焰第2层
-parameter MAT_FIRE_6  = 4'd12;  // 中焰第3层
-parameter MAT_FIRE_7  = 4'd13;  // 中焰第4层
-parameter MAT_FIRE_8  = 4'd14;  // 外焰第1层
-parameter MAT_FIRE_9  = 4'd15;  // 外焰第2层（第9/10层复用此值）
+// Material Definitions (5-bit: values 0-31)
+parameter MAT_EMPTY        = 5'd0;
+parameter MAT_SAND         = 5'd1;
+parameter MAT_WATER        = 5'd2;
+parameter MAT_WALL         = 5'd3;
+parameter MAT_FIRE         = 5'd4;
+parameter MAT_SMOKE        = 5'd5;
+parameter MAT_WATER_ACTIVE = 5'd6;  // Active/spreading water state
+// Fire flame layers: 9 unique values (7-15)
+parameter MAT_FIRE_1  = 5'd7;
+parameter MAT_FIRE_2  = 5'd8;
+parameter MAT_FIRE_3  = 5'd9;
+parameter MAT_FIRE_4  = 5'd10;
+parameter MAT_FIRE_5  = 5'd11;
+parameter MAT_FIRE_6  = 5'd12;
+parameter MAT_FIRE_7  = 5'd13;
+parameter MAT_FIRE_8  = 5'd14;
+parameter MAT_FIRE_9  = 5'd15;
+// New solid materials
+parameter MAT_GRASS   = 5'd16;  // Grass block (static, like wall)
+parameter MAT_DIRT    = 5'd17;  // Dirt block (static, like wall)
 
 // VGA -> Grid coordinate mapping (640x480 -> 320x240, divide by 2)
 wire [8:0] grid_read_x = next_x[9:1]; 
@@ -238,13 +241,13 @@ wire [16:0] vga_read_addr = (grid_read_y * GRID_WIDTH) + grid_read_x;
 reg  active_buffer;
 reg  [16:0] ca_read_addr;
 reg  [16:0] ca_write_addr;
-reg  [3:0]  ca_write_data;
+reg  [4:0]  ca_write_data;
 reg         ca_we;
-wire [3:0]  ca_read_data;
+wire [4:0]  ca_read_data;
 
-wire [3:0] vga_data_out;
-wire [3:0] vga_q_A, vga_q_B;
-wire [3:0] ca_q_A, ca_q_B;
+wire [4:0] vga_data_out;
+wire [4:0] vga_q_A, vga_q_B;
+wire [4:0] ca_q_A, ca_q_B;
 
 // HPS brush address
 wire [16:0] hps_write_addr = (brush_y * GRID_WIDTH) + brush_x;
@@ -272,7 +275,7 @@ end
 
 // Brush address and data: single-register sync into M10k_pll domain
 reg         [16:0] brush_addr_sync;
-reg         [3:0]  brush_data_sync;
+reg         [4:0]  brush_data_sync;
 
 // Clear trigger: HPS sends brush at y=250 with brush_mat=5 (sentinel)
 // VGA scanline y=250 is outside visible area, so this write is off-screen
@@ -286,7 +289,7 @@ assign clear_pending_done = (state == S_CLEAR && clear_addr == MAX_CELLS - 17'd1
 always @(posedge M10k_pll or negedge sys_reset_n) begin
     if (!sys_reset_n) begin
         brush_addr_sync <= 17'd0;
-        brush_data_sync <= 4'd0;
+        brush_data_sync <= 5'd0;
         clear_pending   <= 1'b0;
     end else begin
         brush_addr_sync <= hps_write_addr;
@@ -303,7 +306,7 @@ end
 // CA MUX (ca_* is already synchronous to M10k_pll)
 wire        ca_we_mux   = ca_we;
 wire [16:0] ca_addr_mux = ca_write_addr;
-wire [3:0]  ca_data_mux = ca_write_data;
+wire [4:0]  ca_data_mux = ca_write_data;
 
 // Fire brush priority: if painting FIRE onto blocked/burning cells, skip the write
 // Use vga_data_out (from Port A, the displayed buffer) to check current value
@@ -324,7 +327,7 @@ wire is_blocked_for_fire = is_fire_brush & (
 wire brush_allowed = brush_we_edge & ~is_blocked_for_fire;
 wire        we_final   = brush_allowed ? 1'b1    : ca_we_mux;
 wire [16:0] addr_final = brush_allowed ? brush_addr_sync : ca_addr_mux;
-wire [3:0]  data_final = brush_allowed ? brush_data_sync  : ca_data_mux;
+wire [4:0]  data_final = brush_allowed ? brush_data_sync  : ca_data_mux;
 
 // -------------------------------------------------------
 // Dual-port routing
@@ -334,7 +337,7 @@ wire [3:0]  data_final = brush_allowed ? brush_data_sync  : ca_data_mux;
 //   grid_A Port B => CA writes A; grid_B Port B => CA reads B (no write)
 // -------------------------------------------------------
 
-M10K_76800_4 grid_A (
+M10K_76800_5 grid_A (
     .clk(M10k_pll),
     // Port A: always to VGA
     .addr_a(vga_read_addr),
@@ -346,7 +349,7 @@ M10K_76800_4 grid_A (
     .q_b(ca_q_A)
 );
 
-M10K_76800_4 grid_B (
+M10K_76800_5 grid_B (
     .clk(M10k_pll),
     // Port A: always to VGA
     .addr_a(vga_read_addr),
@@ -427,7 +430,7 @@ begin
     end else begin
         // Inner flame (1-3): radial heat gradient + 2-phase flicker via ctr[3]
         case (layer)
-            4'd1: fire_color = ctr[3] ? 8'b111_111_00 : 8'b111_110_00;  // yellow-white <-> light yellow (hottest core)
+            4'd1: fire_color = ctr[3] ? 8'b111_111_00 : 8'b111_110_00;  // yellow-white <-> light yellow
             4'd2: fire_color = ctr[3] ? 8'b111_110_00 : 8'b111_100_00;  // light yellow <-> orange
             4'd3: fire_color = ctr[3] ? 8'b111_100_00 : 8'b111_010_00;  // orange <-> deep orange-red
             default: fire_color = 8'b111_100_00;
@@ -453,251 +456,318 @@ always @(*) begin
         MAT_FIRE_6,
         MAT_FIRE_7,
         MAT_FIRE_8,
-        MAT_FIRE_9:             grid_color = fire_color(vga_data_out - 4'd6, visual_anim_ctr + {grid_read_x[2:0], 1'b0});
+        MAT_FIRE_9:             grid_color = fire_color(vga_data_out[3:0] - 4'd6, visual_anim_ctr + {grid_read_x[2:0], 1'b0});
+        MAT_GRASS: grid_color = 8'b011_111_10; // Bright green
+        MAT_DIRT:  grid_color = 8'b100_011_00; // Brown
         default:   grid_color = 8'b000_000_00;
     endcase
 end
 
 // ============================================================
-// Toolbar UI (Feature 2)
+// Toolbar UI — 2 rows × 5 columns
+// Row 0: y=200..219  (WALL / WATER / SAND / FIRE / SMOKE)
+// Row 1: y=220..239  (GRASS / DIRT / future slots)
+// Columns: 5 × 64 px; slot index = grid_read_x[8:6]
 // ============================================================
 wire in_toolbar;
-assign in_toolbar = (grid_read_y >= 9'd200 && grid_read_y <= 9'd239);
+assign in_toolbar = (grid_read_y[8:0] >= 9'd200 && grid_read_y[8:0] <= 9'd239);
 
-// Toolbar slot computation (5 slots of 64px each)
+wire toolbar_row;  // 0 = top row (y=200..219), 1 = bottom row (y=220..239)
+assign toolbar_row = (grid_read_y[8:0] >= 9'd220);
+
 wire [2:0] toolbar_slot;
-assign toolbar_slot = grid_read_x[8:6]; // 0..4: 0-63, 64-127, 128-191, 192-255, 256-319
+assign toolbar_slot = grid_read_x[8:6]; // 0..4 per row
 
-// Toolbar borders
-wire toolbar_left_border  = (grid_read_x[8:0] == 9'd0) || (grid_read_x[8:0] == 9'd64) || 
-                             (grid_read_x[8:0] == 9'd128) || (grid_read_x[8:0] == 9'd192) || 
-                             (grid_read_x[8:0] == 9'd256) || (grid_read_x[8:0] == 9'd319);
-wire toolbar_top_border    = (grid_read_y[8:0] == 9'd200);
-wire toolbar_bottom_border = (grid_read_y[8:0] == 9'd239);
-wire toolbar_border        = toolbar_left_border | toolbar_top_border | toolbar_bottom_border;
+// ---------- borders & separators ----------
+wire toolbar_top_bar    = (grid_read_y[8:0] >= 9'd198 && grid_read_y[8:0] <= 9'd199);
+wire toolbar_bottom_bar = (grid_read_y[8:0] >= 9'd238 && grid_read_y[8:0] <= 9'd239);
+wire toolbar_row_sep    = (grid_read_y[8:0] == 9'd219); // line between rows
 
-wire toolbar_selected_slot;
-assign toolbar_selected_slot = (brush_mat == 4'd3 && toolbar_slot == 3'd0) ||
-                               (brush_mat == 4'd2 && toolbar_slot == 3'd1) ||
-                               (brush_mat == 4'd1 && toolbar_slot == 3'd2) ||
-                               (brush_mat == 4'd4 && toolbar_slot == 3'd3) ||
-                               (brush_mat == 4'd5 && toolbar_slot == 3'd4);
-
-// Toolbar divider lines between slots — 2px wide
 wire toolbar_divider = (grid_read_x[8:0] >= 9'd63  && grid_read_x[8:0] <= 9'd64) ||
                        (grid_read_x[8:0] >= 9'd127 && grid_read_x[8:0] <= 9'd128) ||
                        (grid_read_x[8:0] >= 9'd191 && grid_read_x[8:0] <= 9'd192) ||
                        (grid_read_x[8:0] >= 9'd255 && grid_read_x[8:0] <= 9'd256);
 
-// Toolbar top/bottom 2px bars
-wire toolbar_top_bar = (grid_read_y[8:0] >= 9'd198 && grid_read_y[8:0] <= 9'd199);
-wire toolbar_bottom_bar = (grid_read_y[8:0] >= 9'd238 && grid_read_y[8:0] <= 9'd239);
+// ---------- selected slot ----------
+wire toolbar_selected_slot =
+    (!toolbar_row && brush_mat == MAT_WALL  && toolbar_slot == 3'd0) ||
+    (!toolbar_row && brush_mat == MAT_WATER && toolbar_slot == 3'd1) ||
+    (!toolbar_row && brush_mat == MAT_SAND  && toolbar_slot == 3'd2) ||
+    (!toolbar_row && brush_mat == MAT_FIRE  && toolbar_slot == 3'd3) ||
+    (!toolbar_row && brush_mat == MAT_SMOKE && toolbar_slot == 3'd4) ||
+    ( toolbar_row && brush_mat == MAT_GRASS && toolbar_slot == 3'd0) ||
+    ( toolbar_row && brush_mat == MAT_DIRT  && toolbar_slot == 3'd1);
 
-// Selected slot bounding box
-wire slot_sel_left  = (toolbar_slot == 3'd0) && (grid_read_x[8:0] == 9'd0);
-wire slot_sel_right = (toolbar_slot == 3'd0) && (grid_read_x[8:0] == 9'd63);
-wire slot_sel_right2 = (toolbar_slot == 3'd1) && (grid_read_x[8:0] == 9'd127);
-wire slot_sel_right3 = (toolbar_slot == 3'd2) && (grid_read_x[8:0] == 9'd191);
-wire slot_sel_right4 = (toolbar_slot == 3'd3) && (grid_read_x[8:0] == 9'd255);
-wire slot_sel_right5 = (toolbar_slot == 3'd4) && (grid_read_x[8:0] == 9'd319);
-wire slot_sel_top    = (grid_read_y[8:0] == 9'd200);
-wire slot_sel_bottom = (grid_read_y[8:0] == 9'd239);
-wire slot_sel_vert   = toolbar_selected_slot && (slot_sel_left || slot_sel_right || slot_sel_right2 || slot_sel_right3 || slot_sel_right4 || slot_sel_right5);
-wire slot_sel_horiz  = toolbar_selected_slot && (slot_sel_top || slot_sel_bottom);
+// Selection border — vertical (left/right edges of slot)
+wire [8:0] sel_x_left  = {toolbar_slot, 6'b0};         // slot * 64
+wire [8:0] sel_x_right = {toolbar_slot, 6'b0} + 9'd63; // slot * 64 + 63
+wire slot_sel_vert  = toolbar_selected_slot &&
+    (grid_read_x[8:0] == sel_x_left || grid_read_x[8:0] == sel_x_right);
+// Selection border — horizontal (top/bottom edge of each row)
+wire slot_sel_top    = toolbar_selected_slot &&
+    ((!toolbar_row && grid_read_y[8:0] == 9'd200) ||
+     ( toolbar_row && grid_read_y[8:0] == 9'd220));
+wire slot_sel_bottom = toolbar_selected_slot &&
+    ((!toolbar_row && grid_read_y[8:0] == 9'd218) ||
+     ( toolbar_row && grid_read_y[8:0] == 9'd238));
+wire slot_sel_horiz  = slot_sel_top || slot_sel_bottom;
 
-// ==========================================
-// Toolbar dot-matrix font (3×5 per letter)
-// y=208..212 (text area within toolbar)
-// ==========================================
-wire in_text_area_y = (grid_read_y[8:0] >= 9'd208 && grid_read_y[8:0] <= 9'd212);
+// ---------- dot-matrix font ----------
+// Row 0 text: y=208..212  |  Row 1 text: y=228..232
+wire in_text_area_r0 = (grid_read_y[8:0] >= 9'd208 && grid_read_y[8:0] <= 9'd212);
+wire in_text_area_r1 = (grid_read_y[8:0] >= 9'd228 && grid_read_y[8:0] <= 9'd232);
 
-// SLOT 0: "WALL" at x=24..38
-wire t0_y0 = in_text_area_y && (grid_read_y[8:0] == 9'd208);
-wire t0_y1 = in_text_area_y && (grid_read_y[8:0] == 9'd209);
-wire t0_y2 = in_text_area_y && (grid_read_y[8:0] == 9'd210);
-wire t0_y3 = in_text_area_y && (grid_read_y[8:0] == 9'd211);
-wire t0_y4 = in_text_area_y && (grid_read_y[8:0] == 9'd212);
+// -- ROW 0 y-wires (reused by all 5 row-0 labels) --
+wire r0y0 = in_text_area_r0 && (grid_read_y[8:0] == 9'd208);
+wire r0y1 = in_text_area_r0 && (grid_read_y[8:0] == 9'd209);
+wire r0y2 = in_text_area_r0 && (grid_read_y[8:0] == 9'd210);
+wire r0y3 = in_text_area_r0 && (grid_read_y[8:0] == 9'd211);
+wire r0y4 = in_text_area_r0 && (grid_read_y[8:0] == 9'd212);
+
+// SLOT 0 row 0: "WALL" x=24..38
 wire t0_pixel =
-  ( (grid_read_x[8:0] == 9'd24 || grid_read_x[8:0] == 9'd26) && t0_y0 ) |
-  ( (grid_read_x[8:0] == 9'd24 || grid_read_x[8:0] == 9'd26) && t0_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd24 && grid_read_x[8:0] <= 9'd26) && t0_y2 ) |
-  ( (grid_read_x[8:0] >= 9'd24 && grid_read_x[8:0] <= 9'd26) && t0_y3 ) |
-  ( (grid_read_x[8:0] == 9'd24 || grid_read_x[8:0] == 9'd25) && t0_y4 ) |
-  ( (grid_read_x[8:0] == 9'd29) && t0_y0 ) |
-  ( (grid_read_x[8:0] == 9'd28 || grid_read_x[8:0] == 9'd30) && t0_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd28 && grid_read_x[8:0] <= 9'd30) && t0_y2 ) |
-  ( (grid_read_x[8:0] == 9'd28 || grid_read_x[8:0] == 9'd30) && t0_y3 ) |
-  ( (grid_read_x[8:0] == 9'd28 || grid_read_x[8:0] == 9'd30) && t0_y4 ) |
-  ( (grid_read_x[8:0] == 9'd32) && t0_y0 ) |
-  ( (grid_read_x[8:0] == 9'd32) && t0_y1 ) |
-  ( (grid_read_x[8:0] == 9'd32) && t0_y2 ) |
-  ( (grid_read_x[8:0] == 9'd32) && t0_y3 ) |
-  ( (grid_read_x[8:0] >= 9'd32 && grid_read_x[8:0] <= 9'd34) && t0_y4 ) |
-  ( (grid_read_x[8:0] == 9'd36) && t0_y0 ) |
-  ( (grid_read_x[8:0] == 9'd36) && t0_y1 ) |
-  ( (grid_read_x[8:0] == 9'd36) && t0_y2 ) |
-  ( (grid_read_x[8:0] == 9'd36) && t0_y3 ) |
-  ( (grid_read_x[8:0] >= 9'd36 && grid_read_x[8:0] <= 9'd38) && t0_y4 );
+  ( (grid_read_x[8:0] == 9'd24 || grid_read_x[8:0] == 9'd26) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd24 || grid_read_x[8:0] == 9'd26) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd24 && grid_read_x[8:0] <= 9'd26) && r0y2 ) |
+  ( (grid_read_x[8:0] >= 9'd24 && grid_read_x[8:0] <= 9'd26) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd24 || grid_read_x[8:0] == 9'd25) && r0y4 ) |
+  ( (grid_read_x[8:0] == 9'd29) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd28 || grid_read_x[8:0] == 9'd30) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd28 && grid_read_x[8:0] <= 9'd30) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd28 || grid_read_x[8:0] == 9'd30) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd28 || grid_read_x[8:0] == 9'd30) && r0y4 ) |
+  ( (grid_read_x[8:0] == 9'd32) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd32) && r0y1 ) |
+  ( (grid_read_x[8:0] == 9'd32) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd32) && r0y3 ) |
+  ( (grid_read_x[8:0] >= 9'd32 && grid_read_x[8:0] <= 9'd34) && r0y4 ) |
+  ( (grid_read_x[8:0] == 9'd36) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd36) && r0y1 ) |
+  ( (grid_read_x[8:0] == 9'd36) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd36) && r0y3 ) |
+  ( (grid_read_x[8:0] >= 9'd36 && grid_read_x[8:0] <= 9'd38) && r0y4 );
 
-// SLOT 1: "WATER" at x=87..105 (slot 1 base=64, offset 23)
-wire t1_y0 = in_text_area_y && (grid_read_y[8:0] == 9'd208);
-wire t1_y1 = in_text_area_y && (grid_read_y[8:0] == 9'd209);
-wire t1_y2 = in_text_area_y && (grid_read_y[8:0] == 9'd210);
-wire t1_y3 = in_text_area_y && (grid_read_y[8:0] == 9'd211);
-wire t1_y4 = in_text_area_y && (grid_read_y[8:0] == 9'd212);
+// SLOT 1 row 0: "WATER" x=87..105
 wire t1_pixel =
-  ( (grid_read_x[8:0] == 9'd87 || grid_read_x[8:0] == 9'd89) && t1_y0 ) |
-  ( (grid_read_x[8:0] == 9'd87 || grid_read_x[8:0] == 9'd89) && t1_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd87 && grid_read_x[8:0] <= 9'd89) && t1_y2 ) |
-  ( (grid_read_x[8:0] >= 9'd87 && grid_read_x[8:0] <= 9'd89) && t1_y3 ) |
-  ( (grid_read_x[8:0] == 9'd87 || grid_read_x[8:0] == 9'd88) && t1_y4 ) |
-  ( (grid_read_x[8:0] == 9'd92) && t1_y0 ) |
-  ( (grid_read_x[8:0] == 9'd91 || grid_read_x[8:0] == 9'd93) && t1_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd91 && grid_read_x[8:0] <= 9'd93) && t1_y2 ) |
-  ( (grid_read_x[8:0] == 9'd91 || grid_read_x[8:0] == 9'd93) && t1_y3 ) |
-  ( (grid_read_x[8:0] == 9'd91 || grid_read_x[8:0] == 9'd93) && t1_y4 ) |
-  ( (grid_read_x[8:0] >= 9'd95 && grid_read_x[8:0] <= 9'd97) && t1_y0 ) |
-  ( (grid_read_x[8:0] == 9'd96) && t1_y1 ) |
-  ( (grid_read_x[8:0] == 9'd96) && t1_y2 ) |
-  ( (grid_read_x[8:0] == 9'd96) && t1_y3 ) |
-  ( (grid_read_x[8:0] == 9'd96) && t1_y4 ) |
-  ( (grid_read_x[8:0] >= 9'd99 && grid_read_x[8:0] <= 9'd101) && t1_y0 ) |
-  ( (grid_read_x[8:0] == 9'd99) && t1_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd99 && grid_read_x[8:0] <= 9'd100) && t1_y2 ) |
-  ( (grid_read_x[8:0] == 9'd99) && t1_y3 ) |
-  ( (grid_read_x[8:0] >= 9'd99 && grid_read_x[8:0] <= 9'd101) && t1_y4 ) |
-  ( (grid_read_x[8:0] >= 9'd103 && grid_read_x[8:0] <= 9'd105) && t1_y0 ) |
-  ( (grid_read_x[8:0] == 9'd103 || grid_read_x[8:0] == 9'd104) && t1_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd103 && grid_read_x[8:0] <= 9'd105) && t1_y2 ) |
-  ( (grid_read_x[8:0] == 9'd103 || grid_read_x[8:0] == 9'd104) && t1_y3 ) |
-  ( (grid_read_x[8:0] == 9'd103 || grid_read_x[8:0] == 9'd105) && t1_y4 );
+  ( (grid_read_x[8:0] == 9'd87 || grid_read_x[8:0] == 9'd89) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd87 || grid_read_x[8:0] == 9'd89) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd87 && grid_read_x[8:0] <= 9'd89) && r0y2 ) |
+  ( (grid_read_x[8:0] >= 9'd87 && grid_read_x[8:0] <= 9'd89) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd87 || grid_read_x[8:0] == 9'd88) && r0y4 ) |
+  ( (grid_read_x[8:0] == 9'd92) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd91 || grid_read_x[8:0] == 9'd93) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd91 && grid_read_x[8:0] <= 9'd93) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd91 || grid_read_x[8:0] == 9'd93) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd91 || grid_read_x[8:0] == 9'd93) && r0y4 ) |
+  ( (grid_read_x[8:0] >= 9'd95 && grid_read_x[8:0] <= 9'd97) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd96) && r0y1 ) |
+  ( (grid_read_x[8:0] == 9'd96) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd96) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd96) && r0y4 ) |
+  ( (grid_read_x[8:0] >= 9'd99 && grid_read_x[8:0] <= 9'd101) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd99) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd99 && grid_read_x[8:0] <= 9'd100) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd99) && r0y3 ) |
+  ( (grid_read_x[8:0] >= 9'd99 && grid_read_x[8:0] <= 9'd101) && r0y4 ) |
+  ( (grid_read_x[8:0] >= 9'd103 && grid_read_x[8:0] <= 9'd105) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd103 || grid_read_x[8:0] == 9'd104) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd103 && grid_read_x[8:0] <= 9'd105) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd103 || grid_read_x[8:0] == 9'd104) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd103 || grid_read_x[8:0] == 9'd105) && r0y4 );
 
-// SLOT 2: "SAND" at x=152..166 (slot 2 base=128, offset 24)
-wire t2_y0 = in_text_area_y && (grid_read_y[8:0] == 9'd208);
-wire t2_y1 = in_text_area_y && (grid_read_y[8:0] == 9'd209);
-wire t2_y2 = in_text_area_y && (grid_read_y[8:0] == 9'd210);
-wire t2_y3 = in_text_area_y && (grid_read_y[8:0] == 9'd211);
-wire t2_y4 = in_text_area_y && (grid_read_y[8:0] == 9'd212);
+// SLOT 2 row 0: "SAND" x=152..166
 wire t2_pixel =
-  ( (grid_read_x[8:0] >= 9'd152 && grid_read_x[8:0] <= 9'd154) && t2_y0 ) |
-  ( (grid_read_x[8:0] == 9'd152) && t2_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd152 && grid_read_x[8:0] <= 9'd153) && t2_y2 ) |
-  ( (grid_read_x[8:0] == 9'd154) && t2_y3 ) |
-  ( (grid_read_x[8:0] >= 9'd152 && grid_read_x[8:0] <= 9'd154) && t2_y4 ) |
-  ( (grid_read_x[8:0] == 9'd157) && t2_y0 ) |
-  ( (grid_read_x[8:0] == 9'd156 || grid_read_x[8:0] == 9'd158) && t2_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd156 && grid_read_x[8:0] <= 9'd158) && t2_y2 ) |
-  ( (grid_read_x[8:0] == 9'd156 || grid_read_x[8:0] == 9'd158) && t2_y3 ) |
-  ( (grid_read_x[8:0] == 9'd156 || grid_read_x[8:0] == 9'd158) && t2_y4 ) |
-  ( (grid_read_x[8:0] == 9'd160 || grid_read_x[8:0] == 9'd162) && t2_y0 ) |
-  ( (grid_read_x[8:0] >= 9'd160 && grid_read_x[8:0] <= 9'd162) && t2_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd160 && grid_read_x[8:0] <= 9'd162) && t2_y2 ) |
-  ( (grid_read_x[8:0] >= 9'd160 && grid_read_x[8:0] <= 9'd162) && t2_y3 ) |
-  ( (grid_read_x[8:0] == 9'd160 || grid_read_x[8:0] == 9'd162) && t2_y4 ) |
-  ( (grid_read_x[8:0] >= 9'd164 && grid_read_x[8:0] <= 9'd165) && t2_y0 ) |
-  ( (grid_read_x[8:0] == 9'd164 || grid_read_x[8:0] == 9'd165) && t2_y1 ) |
-  ( (grid_read_x[8:0] == 9'd164 || grid_read_x[8:0] == 9'd165) && t2_y2 ) |
-  ( (grid_read_x[8:0] == 9'd164 || grid_read_x[8:0] == 9'd165) && t2_y3 ) |
-  ( (grid_read_x[8:0] >= 9'd164 && grid_read_x[8:0] <= 9'd166) && t2_y4 );
+  ( (grid_read_x[8:0] >= 9'd152 && grid_read_x[8:0] <= 9'd154) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd152) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd152 && grid_read_x[8:0] <= 9'd153) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd154) && r0y3 ) |
+  ( (grid_read_x[8:0] >= 9'd152 && grid_read_x[8:0] <= 9'd154) && r0y4 ) |
+  ( (grid_read_x[8:0] == 9'd157) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd156 || grid_read_x[8:0] == 9'd158) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd156 && grid_read_x[8:0] <= 9'd158) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd156 || grid_read_x[8:0] == 9'd158) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd156 || grid_read_x[8:0] == 9'd158) && r0y4 ) |
+  ( (grid_read_x[8:0] == 9'd160 || grid_read_x[8:0] == 9'd162) && r0y0 ) |
+  ( (grid_read_x[8:0] >= 9'd160 && grid_read_x[8:0] <= 9'd162) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd160 && grid_read_x[8:0] <= 9'd162) && r0y2 ) |
+  ( (grid_read_x[8:0] >= 9'd160 && grid_read_x[8:0] <= 9'd162) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd160 || grid_read_x[8:0] == 9'd162) && r0y4 ) |
+  ( (grid_read_x[8:0] >= 9'd164 && grid_read_x[8:0] <= 9'd165) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd164 || grid_read_x[8:0] == 9'd165) && r0y1 ) |
+  ( (grid_read_x[8:0] == 9'd164 || grid_read_x[8:0] == 9'd165) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd164 || grid_read_x[8:0] == 9'd165) && r0y3 ) |
+  ( (grid_read_x[8:0] >= 9'd164 && grid_read_x[8:0] <= 9'd166) && r0y4 );
 
-// SLOT 3: "FIRE" at x=216..230 (slot 3 base=192, offset 24)
-wire t3_y0 = in_text_area_y && (grid_read_y[8:0] == 9'd208);
-wire t3_y1 = in_text_area_y && (grid_read_y[8:0] == 9'd209);
-wire t3_y2 = in_text_area_y && (grid_read_y[8:0] == 9'd210);
-wire t3_y3 = in_text_area_y && (grid_read_y[8:0] == 9'd211);
-wire t3_y4 = in_text_area_y && (grid_read_y[8:0] == 9'd212);
+// SLOT 3 row 0: "FIRE" x=216..230
 wire t3_pixel =
-  ( (grid_read_x[8:0] >= 9'd216 && grid_read_x[8:0] <= 9'd218) && t3_y0 ) |
-  ( (grid_read_x[8:0] == 9'd216) && t3_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd216 && grid_read_x[8:0] <= 9'd217) && t3_y2 ) |
-  ( (grid_read_x[8:0] == 9'd216) && t3_y3 ) |
-  ( (grid_read_x[8:0] == 9'd216) && t3_y4 ) |
-  ( (grid_read_x[8:0] >= 9'd220 && grid_read_x[8:0] <= 9'd222) && t3_y0 ) |
-  ( (grid_read_x[8:0] == 9'd221) && t3_y1 ) |
-  ( (grid_read_x[8:0] == 9'd221) && t3_y2 ) |
-  ( (grid_read_x[8:0] == 9'd221) && t3_y3 ) |
-  ( (grid_read_x[8:0] >= 9'd220 && grid_read_x[8:0] <= 9'd222) && t3_y4 ) |
-  ( (grid_read_x[8:0] >= 9'd224 && grid_read_x[8:0] <= 9'd226) && t3_y0 ) |
-  ( (grid_read_x[8:0] == 9'd224 || grid_read_x[8:0] == 9'd225) && t3_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd224 && grid_read_x[8:0] <= 9'd226) && t3_y2 ) |
-  ( (grid_read_x[8:0] == 9'd224 || grid_read_x[8:0] == 9'd225) && t3_y3 ) |
-  ( (grid_read_x[8:0] == 9'd224 || grid_read_x[8:0] == 9'd226) && t3_y4 ) |
-  ( (grid_read_x[8:0] >= 9'd228 && grid_read_x[8:0] <= 9'd230) && t3_y0 ) |
-  ( (grid_read_x[8:0] == 9'd228) && t3_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd228 && grid_read_x[8:0] <= 9'd229) && t3_y2 ) |
-  ( (grid_read_x[8:0] == 9'd228) && t3_y3 ) |
-  ( (grid_read_x[8:0] >= 9'd228 && grid_read_x[8:0] <= 9'd230) && t3_y4 );
+  ( (grid_read_x[8:0] >= 9'd216 && grid_read_x[8:0] <= 9'd218) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd216) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd216 && grid_read_x[8:0] <= 9'd217) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd216) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd216) && r0y4 ) |
+  ( (grid_read_x[8:0] >= 9'd220 && grid_read_x[8:0] <= 9'd222) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd221) && r0y1 ) |
+  ( (grid_read_x[8:0] == 9'd221) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd221) && r0y3 ) |
+  ( (grid_read_x[8:0] >= 9'd220 && grid_read_x[8:0] <= 9'd222) && r0y4 ) |
+  ( (grid_read_x[8:0] >= 9'd224 && grid_read_x[8:0] <= 9'd226) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd224 || grid_read_x[8:0] == 9'd225) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd224 && grid_read_x[8:0] <= 9'd226) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd224 || grid_read_x[8:0] == 9'd225) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd224 || grid_read_x[8:0] == 9'd226) && r0y4 ) |
+  ( (grid_read_x[8:0] >= 9'd228 && grid_read_x[8:0] <= 9'd230) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd228) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd228 && grid_read_x[8:0] <= 9'd229) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd228) && r0y3 ) |
+  ( (grid_read_x[8:0] >= 9'd228 && grid_read_x[8:0] <= 9'd230) && r0y4 );
 
-// SLOT 4: "SMOKE" at x=279..297 (slot 4 base=256, offset 23)
-wire t4_y0 = in_text_area_y && (grid_read_y[8:0] == 9'd208);
-wire t4_y1 = in_text_area_y && (grid_read_y[8:0] == 9'd209);
-wire t4_y2 = in_text_area_y && (grid_read_y[8:0] == 9'd210);
-wire t4_y3 = in_text_area_y && (grid_read_y[8:0] == 9'd211);
-wire t4_y4 = in_text_area_y && (grid_read_y[8:0] == 9'd212);
+// SLOT 4 row 0: "SMOKE" x=279..297
 wire t4_pixel =
-  ( (grid_read_x[8:0] >= 9'd279 && grid_read_x[8:0] <= 9'd281) && t4_y0 ) |
-  ( (grid_read_x[8:0] == 9'd279) && t4_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd279 && grid_read_x[8:0] <= 9'd280) && t4_y2 ) |
-  ( (grid_read_x[8:0] == 9'd281) && t4_y3 ) |
-  ( (grid_read_x[8:0] >= 9'd279 && grid_read_x[8:0] <= 9'd281) && t4_y4 ) |
-  ( (grid_read_x[8:0] >= 9'd283 && grid_read_x[8:0] <= 9'd285) && t4_y0 ) |
-  ( (grid_read_x[8:0] == 9'd283) && t4_y1 ) |
-  ( (grid_read_x[8:0] == 9'd283 || grid_read_x[8:0] == 9'd284) && t4_y2 ) |
-  ( (grid_read_x[8:0] == 9'd283) && t4_y3 ) |
-  ( (grid_read_x[8:0] == 9'd283 || grid_read_x[8:0] == 9'd285) && t4_y4 ) |
-  ( (grid_read_x[8:0] >= 9'd287 && grid_read_x[8:0] <= 9'd289) && t4_y0 ) |
-  ( (grid_read_x[8:0] == 9'd287 || grid_read_x[8:0] == 9'd289) && t4_y1 ) |
-  ( (grid_read_x[8:0] == 9'd287 || grid_read_x[8:0] == 9'd289) && t4_y2 ) |
-  ( (grid_read_x[8:0] == 9'd287 || grid_read_x[8:0] == 9'd289) && t4_y3 ) |
-  ( (grid_read_x[8:0] >= 9'd287 && grid_read_x[8:0] <= 9'd289) && t4_y4 ) |
-  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd293) && t4_y0 ) |
-  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd292) && t4_y1 ) |
-  ( (grid_read_x[8:0] == 9'd291) && t4_y2 ) |
-  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd292) && t4_y3 ) |
-  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd293) && t4_y4 ) |
-  ( (grid_read_x[8:0] >= 9'd295 && grid_read_x[8:0] <= 9'd297) && t4_y0 ) |
-  ( (grid_read_x[8:0] == 9'd295) && t4_y1 ) |
-  ( (grid_read_x[8:0] >= 9'd295 && grid_read_x[8:0] <= 9'd296) && t4_y2 ) |
-  ( (grid_read_x[8:0] == 9'd295) && t4_y3 ) |
-  ( (grid_read_x[8:0] >= 9'd295 && grid_read_x[8:0] <= 9'd297) && t4_y4 );
+  ( (grid_read_x[8:0] >= 9'd279 && grid_read_x[8:0] <= 9'd281) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd279) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd279 && grid_read_x[8:0] <= 9'd280) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd281) && r0y3 ) |
+  ( (grid_read_x[8:0] >= 9'd279 && grid_read_x[8:0] <= 9'd281) && r0y4 ) |
+  ( (grid_read_x[8:0] >= 9'd283 && grid_read_x[8:0] <= 9'd285) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd283) && r0y1 ) |
+  ( (grid_read_x[8:0] == 9'd283 || grid_read_x[8:0] == 9'd284) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd283) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd283 || grid_read_x[8:0] == 9'd285) && r0y4 ) |
+  ( (grid_read_x[8:0] >= 9'd287 && grid_read_x[8:0] <= 9'd289) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd287 || grid_read_x[8:0] == 9'd289) && r0y1 ) |
+  ( (grid_read_x[8:0] == 9'd287 || grid_read_x[8:0] == 9'd289) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd287 || grid_read_x[8:0] == 9'd289) && r0y3 ) |
+  ( (grid_read_x[8:0] >= 9'd287 && grid_read_x[8:0] <= 9'd289) && r0y4 ) |
+  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd293) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd292) && r0y1 ) |
+  ( (grid_read_x[8:0] == 9'd291) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd292) && r0y3 ) |
+  ( (grid_read_x[8:0] == 9'd291 || grid_read_x[8:0] == 9'd293) && r0y4 ) |
+  ( (grid_read_x[8:0] >= 9'd295 && grid_read_x[8:0] <= 9'd297) && r0y0 ) |
+  ( (grid_read_x[8:0] == 9'd295) && r0y1 ) |
+  ( (grid_read_x[8:0] >= 9'd295 && grid_read_x[8:0] <= 9'd296) && r0y2 ) |
+  ( (grid_read_x[8:0] == 9'd295) && r0y3 ) |
+  ( (grid_read_x[8:0] >= 9'd295 && grid_read_x[8:0] <= 9'd297) && r0y4 );
 
-wire any_text_pixel = (in_toolbar && toolbar_slot == 3'd0 && in_text_area_y && t0_pixel) ||
-                      (in_toolbar && toolbar_slot == 3'd1 && in_text_area_y && t1_pixel) ||
-                      (in_toolbar && toolbar_slot == 3'd2 && in_text_area_y && t2_pixel) ||
-                      (in_toolbar && toolbar_slot == 3'd3 && in_text_area_y && t3_pixel) ||
-                      (in_toolbar && toolbar_slot == 3'd4 && in_text_area_y && t4_pixel);
+// -- ROW 1 y-wires --
+wire r1y0 = in_text_area_r1 && (grid_read_y[8:0] == 9'd228);
+wire r1y1 = in_text_area_r1 && (grid_read_y[8:0] == 9'd229);
+wire r1y2 = in_text_area_r1 && (grid_read_y[8:0] == 9'd230);
+wire r1y3 = in_text_area_r1 && (grid_read_y[8:0] == 9'd231);
+wire r1y4 = in_text_area_r1 && (grid_read_y[8:0] == 9'd232);
 
-wire [7:0] slot0_text_color = 8'b011_011_01; // Wall - gray
-wire [7:0] slot1_text_color = 8'b000_010_11; // Water - blue
-wire [7:0] slot2_text_color = 8'b111_110_00; // Sand - yellow
-wire [7:0] slot3_text_color = 8'b111_100_00; // Fire - orange
-wire [7:0] slot4_text_color = 8'b010_010_00; // Smoke - dark gray
+// SLOT 0 row 1: "GRASS" x=22..40
+// G(22-24) R(26-28) A(30-32) S(34-36) S(38-40)
+wire t5_pixel =
+  // G
+  ( (grid_read_x[8:0] == 9'd23 || grid_read_x[8:0] == 9'd24) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd22) && r1y1 ) |
+  ( (grid_read_x[8:0] == 9'd22 || grid_read_x[8:0] == 9'd24) && r1y2 ) |
+  ( (grid_read_x[8:0] >= 9'd22 && grid_read_x[8:0] <= 9'd24) && r1y3 ) |
+  ( (grid_read_x[8:0] == 9'd23 || grid_read_x[8:0] == 9'd24) && r1y4 ) |
+  // R
+  ( (grid_read_x[8:0] == 9'd26 || grid_read_x[8:0] == 9'd27) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd26 || grid_read_x[8:0] == 9'd28) && r1y1 ) |
+  ( (grid_read_x[8:0] == 9'd26 || grid_read_x[8:0] == 9'd27) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd26 || grid_read_x[8:0] == 9'd28) && r1y3 ) |
+  ( (grid_read_x[8:0] == 9'd26) && r1y4 ) |
+  // A
+  ( (grid_read_x[8:0] == 9'd31) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd30 || grid_read_x[8:0] == 9'd32) && r1y1 ) |
+  ( (grid_read_x[8:0] >= 9'd30 && grid_read_x[8:0] <= 9'd32) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd30 || grid_read_x[8:0] == 9'd32) && r1y3 ) |
+  ( (grid_read_x[8:0] == 9'd30 || grid_read_x[8:0] == 9'd32) && r1y4 ) |
+  // S (first)
+  ( (grid_read_x[8:0] >= 9'd34 && grid_read_x[8:0] <= 9'd36) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd34) && r1y1 ) |
+  ( (grid_read_x[8:0] == 9'd34 || grid_read_x[8:0] == 9'd35) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd36) && r1y3 ) |
+  ( (grid_read_x[8:0] >= 9'd34 && grid_read_x[8:0] <= 9'd36) && r1y4 ) |
+  // S (second)
+  ( (grid_read_x[8:0] >= 9'd38 && grid_read_x[8:0] <= 9'd40) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd38) && r1y1 ) |
+  ( (grid_read_x[8:0] == 9'd38 || grid_read_x[8:0] == 9'd39) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd40) && r1y3 ) |
+  ( (grid_read_x[8:0] >= 9'd38 && grid_read_x[8:0] <= 9'd40) && r1y4 );
 
-wire [7:0] text_color = (toolbar_slot == 3'd0) ? slot0_text_color :
-                        (toolbar_slot == 3'd1) ? slot1_text_color :
-                        (toolbar_slot == 3'd2) ? slot2_text_color :
-                        (toolbar_slot == 3'd3) ? slot3_text_color :
-                                                  slot4_text_color;
+// SLOT 1 row 1: "DIRT" x=88..102
+// D(88-90) I(92-94) R(96-98) T(100-102)
+wire t6_pixel =
+  // D
+  ( (grid_read_x[8:0] == 9'd88 || grid_read_x[8:0] == 9'd89) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd88 || grid_read_x[8:0] == 9'd90) && r1y1 ) |
+  ( (grid_read_x[8:0] == 9'd88 || grid_read_x[8:0] == 9'd90) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd88 || grid_read_x[8:0] == 9'd90) && r1y3 ) |
+  ( (grid_read_x[8:0] == 9'd88 || grid_read_x[8:0] == 9'd89) && r1y4 ) |
+  // I
+  ( (grid_read_x[8:0] >= 9'd92 && grid_read_x[8:0] <= 9'd94) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd93) && r1y1 ) |
+  ( (grid_read_x[8:0] == 9'd93) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd93) && r1y3 ) |
+  ( (grid_read_x[8:0] >= 9'd92 && grid_read_x[8:0] <= 9'd94) && r1y4 ) |
+  // R
+  ( (grid_read_x[8:0] == 9'd96 || grid_read_x[8:0] == 9'd97) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd96 || grid_read_x[8:0] == 9'd98) && r1y1 ) |
+  ( (grid_read_x[8:0] == 9'd96 || grid_read_x[8:0] == 9'd97) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd96 || grid_read_x[8:0] == 9'd98) && r1y3 ) |
+  ( (grid_read_x[8:0] == 9'd96) && r1y4 ) |
+  // T
+  ( (grid_read_x[8:0] >= 9'd100 && grid_read_x[8:0] <= 9'd102) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd101) && r1y1 ) |
+  ( (grid_read_x[8:0] == 9'd101) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd101) && r1y3 ) |
+  ( (grid_read_x[8:0] == 9'd101) && r1y4 );
 
-// Material color preview strip at y=215..219 (below text, within toolbar)
-wire in_preview_strip = (grid_read_y[8:0] >= 9'd215 && grid_read_y[8:0] <= 9'd219) &&
-                        !toolbar_divider;
-wire [7:0] preview_color = (toolbar_slot == 3'd0) ? 8'b011_011_01 :  // WALL gray
-                           (toolbar_slot == 3'd1) ? 8'b000_010_11 :  // WATER blue
-                           (toolbar_slot == 3'd2) ? 8'b111_110_00 :  // SAND yellow
-                           (toolbar_slot == 3'd3) ? 8'b111_000_00 :  // FIRE red
-                           8'b000_000_00;   // SMOKE black
+wire any_text_pixel =
+    (in_toolbar && !toolbar_row && toolbar_slot == 3'd0 && in_text_area_r0 && t0_pixel) ||
+    (in_toolbar && !toolbar_row && toolbar_slot == 3'd1 && in_text_area_r0 && t1_pixel) ||
+    (in_toolbar && !toolbar_row && toolbar_slot == 3'd2 && in_text_area_r0 && t2_pixel) ||
+    (in_toolbar && !toolbar_row && toolbar_slot == 3'd3 && in_text_area_r0 && t3_pixel) ||
+    (in_toolbar && !toolbar_row && toolbar_slot == 3'd4 && in_text_area_r0 && t4_pixel) ||
+    (in_toolbar &&  toolbar_row && toolbar_slot == 3'd0 && in_text_area_r1 && t5_pixel) ||
+    (in_toolbar &&  toolbar_row && toolbar_slot == 3'd1 && in_text_area_r1 && t6_pixel);
 
-// Toolbar color logic
+// Text colors per slot
+wire [7:0] text_color =
+    (!toolbar_row && toolbar_slot == 3'd0) ? 8'b011_011_01 :  // WALL  gray
+    (!toolbar_row && toolbar_slot == 3'd1) ? 8'b000_010_11 :  // WATER blue
+    (!toolbar_row && toolbar_slot == 3'd2) ? 8'b111_110_00 :  // SAND  yellow
+    (!toolbar_row && toolbar_slot == 3'd3) ? 8'b111_100_00 :  // FIRE  orange
+    (!toolbar_row)                         ? 8'b010_010_00 :  // SMOKE dark
+    ( toolbar_row && toolbar_slot == 3'd0) ? 8'b011_111_10 :  // GRASS green
+    ( toolbar_row && toolbar_slot == 3'd1) ? 8'b100_011_00 :  // DIRT  brown
+                                             8'b010_010_01;   // empty slot
+
+// Material color preview strips
+// Row 0: y=214..218   Row 1: y=234..238
+wire in_preview_strip =
+    ((grid_read_y[8:0] >= 9'd214 && grid_read_y[8:0] <= 9'd218 && !toolbar_row) ||
+     (grid_read_y[8:0] >= 9'd234 && grid_read_y[8:0] <= 9'd238 &&  toolbar_row)) &&
+    !toolbar_divider &&
+    // Row 1: only show preview for assigned slots
+    (!toolbar_row || toolbar_slot == 3'd0 || toolbar_slot == 3'd1);
+
+wire [7:0] preview_color =
+    (!toolbar_row && toolbar_slot == 3'd0) ? 8'b011_011_01 :  // WALL
+    (!toolbar_row && toolbar_slot == 3'd1) ? 8'b000_010_11 :  // WATER
+    (!toolbar_row && toolbar_slot == 3'd2) ? 8'b111_110_00 :  // SAND
+    (!toolbar_row && toolbar_slot == 3'd3) ? 8'b111_000_00 :  // FIRE
+    (!toolbar_row)                         ? 8'b100_100_10 :  // SMOKE
+    ( toolbar_row && toolbar_slot == 3'd0) ? 8'b011_111_10 :  // GRASS
+                                             8'b100_011_00;   // DIRT
+
+// ---------- color logic ----------
 reg [7:0] toolbar_color;
 always @(*) begin
     toolbar_color = 8'b010_010_01; // dark bg
     if (toolbar_top_bar)
-        toolbar_color = 8'b111_111_11; // white top border
+        toolbar_color = 8'b111_111_11; // white bar above toolbar
     else if (toolbar_bottom_bar)
-        toolbar_color = 8'b000_000_00; // black bottom border
+        toolbar_color = 8'b000_000_00; // black bar below toolbar
+    else if (toolbar_row_sep)
+        toolbar_color = 8'b100_100_11; // row separator (mid gray-blue)
     else if (toolbar_divider)
-        toolbar_color = 8'b001_001_01; // dark divider
+        toolbar_color = 8'b001_001_01; // dark column divider
     else if (slot_sel_horiz || slot_sel_vert)
         toolbar_color = 8'b111_111_11; // white selection border
     else if (any_text_pixel)
@@ -845,7 +915,7 @@ reg [5:0]  state;
 reg [16:0] clear_addr;
 reg [9:0]  cx;
 reg [9:0]  cy;
-reg [3:0]  current_mat;
+reg [4:0]  current_mat;
 reg        rnd;           // LFSR sample for priority direction
 // Fire flame marking: layer counter and pending flag
 reg [3:0]  fire_mark_layer;   // 0=idle, 1-9 = writing FIRE_1 through FIRE_9
@@ -856,17 +926,18 @@ wire vsync_falling_edge = (prev_vsync == 1'b1 && VGA_VS == 1'b0);
 
 // Water helper predicates for the two-stage water logic.
 function is_water_like;
-    input [3:0] m;
+    input [4:0] m;
     begin
         is_water_like = (m == MAT_WATER || m == MAT_WATER_ACTIVE);
     end
 endfunction
 
 function is_supported_for_water;
-    input [3:0] m;
+    input [4:0] m;
     begin
         is_supported_for_water = (m == MAT_WALL || m == MAT_SAND ||
-                                  m == MAT_WATER || m == MAT_WATER_ACTIVE);
+                                  m == MAT_WATER || m == MAT_WATER_ACTIVE ||
+                                  m == MAT_GRASS || m == MAT_DIRT);
     end
 endfunction
 
@@ -1377,7 +1448,8 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
                     state         <= S_NEXT_PIXEL;
-                end else if (ca_read_data == MAT_FIRE || ca_read_data >= MAT_FIRE_1) begin
+                end else if (ca_read_data == MAT_FIRE ||
+                             (ca_read_data >= MAT_FIRE_1 && ca_read_data <= MAT_FIRE_9)) begin
                     // Fire/flame below -> redundant fire pixel, disappear so multi-pixel
                     // brushes collapse to a single falling spark instead of stacking.
                     ca_we         <= 1'b0;
@@ -1411,7 +1483,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             S_FIRE_MARK_EV: begin
                 if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE ||
-                    ca_read_data >= MAT_FIRE_1) begin
+                    (ca_read_data >= MAT_FIRE_1 && ca_read_data <= MAT_FIRE_9)) begin
                     // Empty/smoke/existing flame layer → overwrite. Overwriting flame
                     // layers is needed because they decay each frame (BACK is cleared)
                     // and remain visible only if the source re-marks them.
@@ -1670,19 +1742,19 @@ endmodule // end top level
 // Sub-Modules
 //=======================================================
 
-// True Dual-Port M10K memory: 320x240 cells, 4 bits each
-module M10K_76800_4 (
+// True Dual-Port M10K memory: 320x240 cells, 5 bits each
+module M10K_76800_5 (
     input clk,
     // Port A: VGA read-only
     input  [16:0] addr_a,
-    output reg [3:0] q_a,
+    output reg [4:0] q_a,
     // Port B: CA engine read/write
     input  [16:0] addr_b,
-    input  [3:0]  d_b,
+    input  [4:0]  d_b,
     input         we_b,
-    output reg [3:0] q_b
+    output reg [4:0] q_b
 );
-    reg [3:0] mem [76799:0] /* synthesis ramstyle = "no_rw_check, M10K" */;
+    reg [4:0] mem [76799:0] /* synthesis ramstyle = "no_rw_check, M10K" */;
 
     always @(posedge clk) begin
         q_a <= mem[addr_a];
