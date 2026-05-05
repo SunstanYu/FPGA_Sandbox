@@ -1677,7 +1677,7 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             S_FIRE_SPREAD_EV: begin
                 // Optionally ignite
-                if (ca_read_data == MAT_GRASS_STATIC && lfsr[1:0] == 2'b00) begin
+                if (ca_read_data == MAT_GRASS_STATIC) begin
                     ca_we         <= 1'b1;
                     ca_write_addr <= ca_read_addr;
                     ca_write_data <= MAT_FIRE;
