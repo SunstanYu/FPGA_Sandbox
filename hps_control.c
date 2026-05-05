@@ -32,20 +32,26 @@
 #define MAT_WALL  3
 #define MAT_FIRE  4
 #define MAT_SMOKE 5
+#define MAT_GRASS 16
+#define MAT_DIRT  17
 
-// 与 Verilog CANVAS_H 一致：底栏占网格 y=200..239
-#define CANVAS_H 200
+// 与 Verilog CANVAS_H 一致：底栏 y=200..239，两行各 20 格
+#define CANVAS_H      200
+#define TOOLBAR_ROW_H  20
 
 // 画笔大小 (正方形边长)
 #define BRUSH_SIZE 4
 
 const char *material_names[] = {
-	"EMPTY (Eraser)", "SAND", "WATER", "WALL", "FIRE", "SMOKE"
+	"EMPTY (Eraser)", "SAND", "WATER", "WALL", "FIRE", "SMOKE",
+	"[6]","[7]","[8]","[9]","[10]","[11]","[12]","[13]","[14]","[15]",
+	"GRASS", "DIRT"
 };
 
-// 底栏从左到右 5 槽对应材质 (与 VGA sel_tool 映射一致)
-static const int toolbar_slot_mat[5] = {
-	MAT_WALL, MAT_WATER, MAT_SAND, MAT_FIRE, MAT_SMOKE
+// 工具栏 2 行 × 5 列，-1 = 空槽
+static const int toolbar_slot_mat[10] = {
+	MAT_WALL,  MAT_WATER, MAT_SAND, MAT_FIRE, MAT_SMOKE, /* row 0 */
+	MAT_GRASS, MAT_DIRT,  -1,       -1,       -1          /* row 1 */
 };
 
 // 全局 PIO 指针
@@ -184,9 +190,17 @@ int main(void)
 				*(brush_y_ptr) = (unsigned int)(my / 2);
 
 				if (right && !prev_right) {
-					current_mat_idx++;
-					if (current_mat_idx > 5)
-						current_mat_idx = 0;
+					/* 右键循环：只遍历实际材质（跳过内部状态值 6-15） */
+					switch (current_mat_idx) {
+						case MAT_EMPTY: current_mat_idx = MAT_SAND;  break;
+						case MAT_SAND:  current_mat_idx = MAT_WATER; break;
+						case MAT_WATER: current_mat_idx = MAT_WALL;  break;
+						case MAT_WALL:  current_mat_idx = MAT_FIRE;  break;
+						case MAT_FIRE:  current_mat_idx = MAT_SMOKE; break;
+						case MAT_SMOKE: current_mat_idx = MAT_GRASS; break;
+						case MAT_GRASS: current_mat_idx = MAT_DIRT;  break;
+						default:        current_mat_idx = MAT_EMPTY; break;
+					}
 					fpga_set_brush_material((unsigned int)current_mat_idx);
 					printf(">>> SWITCHED BRUSH TO: [%s] <<<\n",
 						material_names[current_mat_idx]);
@@ -197,14 +211,18 @@ int main(void)
 					int grid_x = mx / 2;
 					int grid_y = my / 2;
 					if (grid_y >= CANVAS_H) {
-						/* 边沿触发：只在刚进入底栏时切换一次，
-						   防止拖动过程中反复切换材质 */
+						/* 边沿触发：进入工具栏时切换一次材质 */
 						if (!prev_left) {
-							int slot = grid_x / (320 / 5);
-							if (slot < 0) slot = 0;
-							if (slot > 4) slot = 4;
-							int newm = toolbar_slot_mat[slot];
-							if (newm != current_mat_idx) {
+							/* 计算行（0=上行 y=200..219，1=下行 y=220..239） */
+							int trow = (grid_y - CANVAS_H) / TOOLBAR_ROW_H;
+							if (trow < 0) trow = 0;
+							if (trow > 1) trow = 1;
+							int col = grid_x / (320 / 5);
+							if (col < 0) col = 0;
+							if (col > 4) col = 4;
+							int slot_idx = trow * 5 + col;
+							int newm = toolbar_slot_mat[slot_idx];
+							if (newm >= 0 && newm != current_mat_idx) {
 								current_mat_idx = newm;
 								fpga_set_brush_material((unsigned int)current_mat_idx);
 								printf(">>> TOOLBAR: [%s] <<<\n",

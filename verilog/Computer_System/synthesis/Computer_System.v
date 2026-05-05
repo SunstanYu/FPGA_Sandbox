@@ -4,7 +4,7 @@
 
 `timescale 1 ps / 1 ps
 module Computer_System (
-		output wire [3:0]  brush_mat_pio_external_connection_export, // brush_mat_pio_external_connection.export
+		output wire [4:0]  brush_mat_pio_external_connection_export, // brush_mat_pio_external_connection.export
 		output wire        brush_we_pio_external_connection_export,  //  brush_we_pio_external_connection.export
 		output wire [9:0]  brush_x_pio_external_connection_export,   //   brush_x_pio_external_connection.export
 		output wire [8:0]  brush_y_pio_external_connection_export,   //   brush_y_pio_external_connection.export
