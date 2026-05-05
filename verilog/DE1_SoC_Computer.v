@@ -913,12 +913,12 @@ localparam S_IDLE        = 6'd0,
            S_FIRE_DN_WT      = 6'd31,  // extra wait so M10K read of cell-below settles before S_FIRE_EVAL
            S_FIRE_MARK_WT2   = 6'd32;  // extra wait so M10K read of cell-above settles before S_FIRE_MARK_EV
 
-// Grass physics states (simplified: no diagonal sliding)
+// Grass Pull Model states (combustion: grass checks neighbors for fire)
 localparam S_GRASS_DN_WT  = 6'd33,
-           S_GRASS_DN_EV        = 6'd34,
-           S_FIRE_SPREAD_INIT   = 6'd35,
-           S_FIRE_SPREAD_WT     = 6'd36,
-           S_FIRE_SPREAD_EV     = 6'd37;
+           S_GRASS_DN_EV  = 6'd34,
+           S_GRASS_PULL_WT  = 6'd35,
+           S_GRASS_PULL_EV  = 6'd36,
+           S_GRASS_RESULT   = 6'd37;
 
 reg [5:0]  state;
 reg [16:0] clear_addr;
@@ -927,9 +927,8 @@ reg [9:0]  cy;
 reg [4:0]  current_mat;
 reg        rnd;           // LFSR sample for priority direction
 // Fire flame marking: layer counter and pending flag
-reg [3:0]  fire_mark_layer;   // 0=idle, 1-9 = writing FIRE_1 through FIRE_9
-reg        fire_on_grass;     // flag set when fire sits on grass, triggers spread
-reg [ 1:0] spread_dir;        // current spread direction 0=left,1=right,2=bottom-left,3=bottom-right
+reg [3:0]  fire_mark_layer;   // 0=idle, 1-9 = writing FIRE_1 through FIRE_9 (also used as ignited flag in grass pull)
+reg [ 1:0] spread_dir;        // current grass-pull check direction 0=left,1=bottom-left,2=bottom-right,3=right
 
 reg prev_vsync;
 wire vsync_falling_edge = (prev_vsync == 1'b1 && VGA_VS == 1'b0);
@@ -995,7 +994,6 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     clear_addr <= 17'd0;
                     cx         <= 10'd0;
                     cy         <= CANVAS_ROWS - 10'd1;
-                    fire_on_grass <= 1'b0;
                     spread_dir    <= 2'd0;
                     if (clear_pending) begin
                         // Next VSYNC: BACK is still dirty from old FRONT,
@@ -1150,13 +1148,20 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end
 
                     // ===========================
-                    // GRASS_STATIC physics: static like wall
+                    // GRASS_STATIC physics: Pull Model for fire ignition
+                    // Instead of fire "pushing" into neighbors, grass checks if
+                    // any neighbor has fire and ignites itself. This fixes the
+                    // right-side propagation bug where push writes get overwritten.
                     // ===========================
                     MAT_GRASS_STATIC: begin
-                        ca_we         <= 1'b1;
-                        ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                        ca_write_data <= MAT_GRASS_STATIC;
-                        state         <= S_NEXT_PIXEL;
+                        // Check Left neighbor first (spread_dir = 0)
+                        spread_dir <= 2'd0;
+                        fire_mark_layer <= 4'd0;  // reused as 'ignited' flag
+                        if (cx == 10'd0)
+                            ca_read_addr <= (cy * GRID_WIDTH) + cx; // dummy read
+                        else
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                        state <= S_GRASS_PULL_WT;
                     end
 
                     default: begin
@@ -1472,7 +1477,6 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             S_FIRE_DN_WT: state <= S_FIRE_EVAL;
 
             S_FIRE_EVAL: begin
-                fire_on_grass <= 1'b0;
                 if (ca_read_data == MAT_WATER || ca_read_data == MAT_WATER_ACTIVE) begin
                     // Water below → extinguish, produce smoke at fire origin
                     ca_we         <= 1'b1;
@@ -1494,13 +1498,10 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     state         <= S_NEXT_PIXEL;
                 end else begin
                     // Solid below -> stay in place (FIRE), start marking flame layers.
-                    // Always set fire_on_grass so that spread fires on DIRT (former grass)
-                    // continue to propagate to adjacent GRASS_STATIC each frame.
                     ca_we           <= 1'b1;
                     ca_write_addr   <= (cy * GRID_WIDTH) + cx;
                     ca_write_data   <= MAT_FIRE;
                     fire_mark_layer <= 4'd1;
-                    fire_on_grass   <= 1'b1;
                     state           <= S_FIRE_MARK_WT;
                 end
             end
@@ -1512,8 +1513,6 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                 // Read cell above at current fire_mark_layer offset to check if it's empty
                 if (cy < fire_mark_layer) begin
                     // Above canvas edge (y=0) — stop marking
-                    fire_on_grass <= 1'b0;
-                    spread_dir    <= 2'd0;
                     state <= S_NEXT_PIXEL;
                 end else begin
                     ca_read_addr <= ((cy - fire_mark_layer) * GRID_WIDTH) + cx;
@@ -1553,14 +1552,12 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     fire_mark_layer <= fire_mark_layer + 4'd1;
                     if (fire_mark_layer >= 4'd9) begin
                         // Done after writing layer 9
-                        state <= fire_on_grass ? S_FIRE_SPREAD_INIT : S_NEXT_PIXEL;
+                        state <= S_NEXT_PIXEL;
                     end else begin
                         state <= S_FIRE_MARK_WT;
                     end
                  end else begin
                     // Blocked (wall/sand/water/other fire) → stop marking
-                    fire_on_grass <= 1'b0;
-                    spread_dir    <= 2'd0;
                     state <= S_NEXT_PIXEL;
                 end
             end
@@ -1657,83 +1654,75 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
             end
 
             // ==================================================
-            // FIRE SPREAD: loop 4 directions from fire cell (cx, cy)
-            // Dir 0 (Left:         same row, cx-1)   SAFE: already swept
-            // Dir 1 (Bottom-Left:  cy+1,     cx-1)   SAFE: row cy+1 swept before cy
-            // Dir 2 (Bottom-Right: cy+1,     cx+1)   SAFE: row cy+1 swept before cy
-            // Dir 3 (Right:        same row, cx+1)   NOTE: write may be overwritten by
-            //   the sweep (left-to-right order: cx+1 not yet swept when fire at cx runs).
-            //   Kept for completeness; real rightward propagation requires a pull model.
+            // GRASS PULL MODEL: grass checks neighbors for fire combustion
+            // Instead of fire "pushing" into neighbors, each GRASS_STATIC cell
+            // acts as the decision maker. It checks its 4 neighbors in sequence:
+            //   Dir 0 (Left):        (cy,     cx-1)
+            //   Dir 1 (BottomLeft):  (cy+1,   cx-1)
+            //   Dir 2 (BottomRight): (cy+1,   cx+1)
+            //   Dir 3 (Right):       (cy,     cx+1)
+            // If ANY neighbor has fire, grass ignites itself (writes MAT_FIRE to
+            // its own position). Since the cell writes to itself during its own
+            // scan cycle, the result is never overwritten.
             // ==================================================
-            S_FIRE_SPREAD_INIT: begin
-                spread_dir <= 2'd0;
-                // Dir 0: Left (same row, cx-1), dummy to current if cx==0
-                if (cx == 10'd0)
-                    ca_read_addr <= (cy * GRID_WIDTH) + cx;
-                else
-                    ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
-                state <= S_FIRE_SPREAD_WT;
-            end
+            S_GRASS_PULL_WT: state <= S_GRASS_PULL_EV;
 
-            S_FIRE_SPREAD_WT: begin
-                state <= S_FIRE_SPREAD_EV;
-            end
-
-            S_FIRE_SPREAD_EV: begin
-                // Optionally ignite
-                if (ca_read_data == MAT_GRASS_STATIC) begin
-                    ca_we         <= 1'b1;
-                    ca_write_addr <= ca_read_addr;
-                    ca_write_data <= MAT_FIRE;
+            S_GRASS_PULL_EV: begin
+                // Check if current neighbor has fire
+                if (ca_read_data == MAT_FIRE ||
+                    (ca_read_data >= MAT_FIRE_1 && ca_read_data <= MAT_FIRE_9)) begin
+                    // Neighbor has fire -> ignite!
+                    fire_mark_layer <= 4'd1;  // ignited flag
+                    state <= S_GRASS_RESULT;
                 end else begin
-                    ca_we <= 1'b0;
-                end
-
-                // Increment spread_dir and set next read addr
-                case (spread_dir)
-                    2'd0: begin
-                        // Dir 1: Bottom-Left (cy+1, cx-1); row cy+1 is always safe
+                    // No fire in this neighbor, check next direction
+                    if (spread_dir == 2'd0) begin
+                        // Dir 1: Bottom-Left (cy+1, cx-1)
                         spread_dir <= 2'd1;
                         if (cx == 10'd0 || cy == 10'd199)
-                            ca_read_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_read_addr <= (cy * GRID_WIDTH) + cx; // boundary dummy
                         else
                             ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
-                        state <= S_FIRE_SPREAD_WT;
-                    end
-                    2'd1: begin
-                        // Dir 2: Bottom-Right (cy+1, cx+1); row cy+1 is always safe
+                        state <= S_GRASS_PULL_WT;
+                    end else if (spread_dir == 2'd1) begin
+                        // Dir 2: Bottom-Right (cy+1, cx+1)
                         spread_dir <= 2'd2;
                         if (cx == 10'd319 || cy == 10'd199)
-                            ca_read_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_read_addr <= (cy * GRID_WIDTH) + cx; // boundary dummy
                         else
                             ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
-                        state <= S_FIRE_SPREAD_WT;
-                    end
-                    2'd2: begin
-                        // Dir 3: Right (same row, cx+1)
-                        // Note: cx+1 not yet swept → write may be overwritten if that
-                        // cell is GRASS_STATIC (sweep will re-copy it from FRONT this frame).
-                        // Still useful occasionally; harmless when overwritten.
+                        state <= S_GRASS_PULL_WT;
+                    end else if (spread_dir == 2'd2) begin
+                        // Dir 3: Right (cy, cx+1)
                         spread_dir <= 2'd3;
                         if (cx == 10'd319)
-                            ca_read_addr <= (cy * GRID_WIDTH) + cx;
+                            ca_read_addr <= (cy * GRID_WIDTH) + cx; // boundary dummy
                         else
                             ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
-                        state <= S_FIRE_SPREAD_WT;
+                        state <= S_GRASS_PULL_WT;
+                    end else begin
+                        // spread_dir == 2'd3: All 4 directions checked, none had fire
+                        fire_mark_layer <= 4'd0;  // not ignited
+                        state <= S_GRASS_RESULT;
                     end
-                    2'd3: begin
-                        // Done - all 4 directions checked
-                        fire_on_grass <= 1'b0;
-                        spread_dir    <= 2'd0;
-                        state <= S_NEXT_PIXEL;
-                    end
-                    default: begin
-                        fire_on_grass <= 1'b0;
-                        spread_dir    <= 2'd0;
-                        ca_we         <= 1'b0;
-                        state <= S_NEXT_PIXEL;
-                    end
-                endcase
+                end
+            end
+
+            S_GRASS_RESULT: begin
+                if (fire_mark_layer == 4'd1) begin
+                    // Ignited by neighbor fire -> write MAT_FIRE to own position
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_FIRE;
+                end else begin
+                    // Not ignited -> write MAT_GRASS_STATIC (stay as grass)
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_GRASS_STATIC;
+                end
+                spread_dir    <= 2'd0;
+                fire_mark_layer <= 4'd0;
+                state <= S_NEXT_PIXEL;
             end
 
             // ==================================================
