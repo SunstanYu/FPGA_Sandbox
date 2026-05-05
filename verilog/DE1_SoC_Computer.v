@@ -1493,13 +1493,15 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_we         <= 1'b0;
                     state         <= S_NEXT_PIXEL;
                 end else begin
-                    // Solid (sand/wall) below -> stay in place (FIRE), start marking flame layers
-                    ca_we         <= 1'b1;
-                    ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                    ca_write_data <= MAT_FIRE;
+                    // Solid below -> stay in place (FIRE), start marking flame layers.
+                    // Always set fire_on_grass so that spread fires on DIRT (former grass)
+                    // continue to propagate to adjacent GRASS_STATIC each frame.
+                    ca_we           <= 1'b1;
+                    ca_write_addr   <= (cy * GRID_WIDTH) + cx;
+                    ca_write_data   <= MAT_FIRE;
                     fire_mark_layer <= 4'd1;
-                    if (ca_read_data == MAT_GRASS_STATIC) fire_on_grass <= 1'b1;
-                    state         <= S_FIRE_MARK_WT;
+                    fire_on_grass   <= 1'b1;
+                    state           <= S_FIRE_MARK_WT;
                 end
             end
 
@@ -1656,10 +1658,12 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
 
             // ==================================================
             // FIRE SPREAD: loop 4 directions from fire cell (cx, cy)
-            // Dir 0 (Left: same row, cx-1)
-            // Dir 1 (Right: same row, cx+1)
-            // Dir 2 (Bottom-Left: cy+1, cx-1)
-            // Dir 3 (Bottom-Right: cy+1, cx+1)
+            // Dir 0 (Left:         same row, cx-1)   SAFE: already swept
+            // Dir 1 (Bottom-Left:  cy+1,     cx-1)   SAFE: row cy+1 swept before cy
+            // Dir 2 (Bottom-Right: cy+1,     cx+1)   SAFE: row cy+1 swept before cy
+            // Dir 3 (Right:        same row, cx+1)   NOTE: write may be overwritten by
+            //   the sweep (left-to-right order: cx+1 not yet swept when fire at cx runs).
+            //   Kept for completeness; real rightward propagation requires a pull model.
             // ==================================================
             S_FIRE_SPREAD_INIT: begin
                 spread_dir <= 2'd0;
@@ -1688,30 +1692,33 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                 // Increment spread_dir and set next read addr
                 case (spread_dir)
                     2'd0: begin
-                        // Dir 1: Right (same row, cx+1), dummy if cx==319
+                        // Dir 1: Bottom-Left (cy+1, cx-1); row cy+1 is always safe
                         spread_dir <= 2'd1;
-                        if (cx == 10'd319)
-                            ca_read_addr <= (cy * GRID_WIDTH) + cx;
-                        else
-                            ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
-                        state <= S_FIRE_SPREAD_WT;
-                    end
-                    2'd1: begin
-                        // Dir 2: Bottom-Left (cy+1, cx-1), dummy if cx==0 or cy==199
-                        spread_dir <= 2'd2;
                         if (cx == 10'd0 || cy == 10'd199)
                             ca_read_addr <= (cy * GRID_WIDTH) + cx;
                         else
                             ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx - 10'd1);
                         state <= S_FIRE_SPREAD_WT;
                     end
-                    2'd2: begin
-                        // Dir 3: Bottom-Right (cy+1, cx+1), dummy if cx==319 or cy==199
-                        spread_dir <= 2'd3;
+                    2'd1: begin
+                        // Dir 2: Bottom-Right (cy+1, cx+1); row cy+1 is always safe
+                        spread_dir <= 2'd2;
                         if (cx == 10'd319 || cy == 10'd199)
                             ca_read_addr <= (cy * GRID_WIDTH) + cx;
                         else
                             ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + (cx + 10'd1);
+                        state <= S_FIRE_SPREAD_WT;
+                    end
+                    2'd2: begin
+                        // Dir 3: Right (same row, cx+1)
+                        // Note: cx+1 not yet swept → write may be overwritten if that
+                        // cell is GRASS_STATIC (sweep will re-copy it from FRONT this frame).
+                        // Still useful occasionally; harmless when overwritten.
+                        spread_dir <= 2'd3;
+                        if (cx == 10'd319)
+                            ca_read_addr <= (cy * GRID_WIDTH) + cx;
+                        else
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx + 10'd1);
                         state <= S_FIRE_SPREAD_WT;
                     end
                     2'd3: begin
