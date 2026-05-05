@@ -72,7 +72,7 @@ static void fpga_set_brush_material(unsigned int mat) {
 void paint_to_fpga(int cx, int cy, int material)
 {
 	int half = BRUSH_SIZE / 2;
-	int is_block_material = (material == MAT_GRASS || material == MAT_DIRT);
+	int is_block_material = (material == MAT_GRASS);
 	int x, y;
 	for (y = cy - half; y <= cy + half; y++) {
 		for (x = cx - half; x <= cx + half; x++) {
