@@ -230,6 +230,11 @@ parameter MAT_FIRE_9  = 5'd15;
 parameter MAT_GRASS        = 5'd16;  // Grass block (falls, becomes MAT_GRASS_STATIC on dirt)
 parameter MAT_DIRT         = 5'd17;  // Dirt block (static, like wall)
 parameter MAT_GRASS_STATIC = 5'd18;  // Static grass (resting on dirt, or placed like dirt)
+// Flower materials (5-bit: values 19-22)
+parameter MAT_FLOWER_SEED  = 5'd19;  // Falling seed, triggers flower growth on grass
+parameter MAT_FLOWER_STEM  = 5'd20;  // The stem (green)
+parameter MAT_FLOWER_PETAL = 5'd21;  // The flower petals (purple)
+parameter MAT_FLOWER_BG    = 5'd22;  // Background filler for the 5x8 box (dark gray)
 
 // VGA -> Grid coordinate mapping (640x480 -> 320x240, divide by 2)
 wire [8:0] grid_read_x = next_x[9:1]; 
@@ -461,6 +466,10 @@ always @(*) begin
         MAT_GRASS: grid_color = 8'b011_111_10; // Bright green
         MAT_GRASS_STATIC: grid_color = 8'b010_110_01; // Darker green (settled grass)
         MAT_DIRT:  grid_color = 8'b100_011_00; // Brown
+        MAT_FLOWER_SEED:   grid_color = 8'b100_000_10; // Purple (seed)
+        MAT_FLOWER_STEM:   grid_color = 8'b010_110_00; // Green (stem)
+        MAT_FLOWER_PETAL:  grid_color = 8'b100_000_10; // Purple (petals)
+        MAT_FLOWER_BG:     grid_color = 8'b001_001_00; // Dark gray (background filler)
         default:   grid_color = 8'b000_000_00;
     endcase
 end
@@ -920,12 +929,27 @@ localparam S_GRASS_DN_WT  = 6'd33,
            S_GRASS_PULL_EV  = 6'd36,
            S_GRASS_RESULT   = 6'd37;
 
+// Flower growth states (seed -> 5x8 block generation)
+localparam S_FLOWER_GROW_START = 6'd38,  // Initialize grow counters
+           S_FLOWER_GROW_WT    = 6'd39,  // Wait for M10K read
+           S_FLOWER_GROW_EV    = 6'd40,  // Write flower cell, advance counters
+           S_FLOWER_GROW_DONE  = 6'd41; // Finalize and continue
+
+// Seed fall/evaluation states
+localparam S_SEED_DN_WT = 6'd42,  // Wait for M10K read of cell below seed
+           S_SEED_DN_EV = 6'd43;  // Evaluate below: empty=fall, grass=flower or die, else=disappear
+
 reg [5:0]  state;
 reg [16:0] clear_addr;
 reg [9:0]  cx;
 reg [9:0]  cy;
 reg [4:0]  current_mat;
 reg        rnd;           // LFSR sample for priority direction
+// Flower growth counters (used only during flower generation)
+reg signed [3:0]  grow_dx;  // -2..2  col offset
+reg [4:0]         flower_cell;  // Current cell material during flower growth
+reg [9:0]         grow_row;      // Current Y row being written during growth
+reg [3:0]         flower_row;    // Row index within flower (0=top, 7=bottom)
 // Fire flame marking: layer counter and pending flag
 reg [3:0]  fire_mark_layer;   // 0=idle, 1-9 = writing FIRE_1 through FIRE_9 (also used as ignited flag in grass pull)
 reg [ 1:0] spread_dir;        // current grass-pull check direction 0=left,1=bottom-left,2=bottom-right,3=right
@@ -948,7 +972,9 @@ function is_supported_for_water;
         is_supported_for_water = (m == MAT_WALL || m == MAT_SAND ||
                                   m == MAT_WATER || m == MAT_WATER_ACTIVE ||
                                   m == MAT_GRASS || m == MAT_DIRT ||
-                                  m == MAT_GRASS_STATIC);
+                                  m == MAT_GRASS_STATIC ||
+                                  m == MAT_FLOWER_STEM || m == MAT_FLOWER_PETAL ||
+                                  m == MAT_FLOWER_BG);
     end
 endfunction
 
@@ -1159,6 +1185,59 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                         fire_mark_layer <= 4'd0;  // reused as 'ignited' flag
                         if (cx == 10'd0)
                             ca_read_addr <= (cy * GRID_WIDTH) + cx; // dummy read
+                        else
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                        state <= S_GRASS_PULL_WT;
+                    end
+
+                    // ===========================
+                    // FLOWER SEED physics: falls, triggers growth on grass
+                    // Trigger condition: (cx % 10 == 5) when landing on grass
+                    // ===========================
+                    MAT_FLOWER_SEED: begin
+                        if (cy == CANVAS_ROWS - 10'd1) begin
+                            // At bottom of canvas: disappear
+                            state <= S_NEXT_PIXEL;
+                        end else begin
+                            ca_read_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
+                            state        <= S_SEED_DN_WT;
+                        end
+                    end
+
+                    // ===========================
+                    // FLOWER STEM: static, burns like grass
+                    // ===========================
+                    MAT_FLOWER_STEM: begin
+                        spread_dir <= 2'd0;
+                        fire_mark_layer <= 4'd0;
+                        if (cx == 10'd0)
+                            ca_read_addr <= (cy * GRID_WIDTH) + cx;  // boundary dummy
+                        else
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                        state <= S_GRASS_PULL_WT;
+                    end
+
+                    // ===========================
+                    // FLOWER PETAL: static, burns like grass
+                    // ===========================
+                    MAT_FLOWER_PETAL: begin
+                        spread_dir <= 2'd0;
+                        fire_mark_layer <= 4'd0;
+                        if (cx == 10'd0)
+                            ca_read_addr <= (cy * GRID_WIDTH) + cx;  // boundary dummy
+                        else
+                            ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
+                        state <= S_GRASS_PULL_WT;
+                    end
+
+                    // ===========================
+                    // FLOWER BG: static filler, burns like grass
+                    // ===========================
+                    MAT_FLOWER_BG: begin
+                        spread_dir <= 2'd0;
+                        fire_mark_layer <= 4'd0;
+                        if (cx == 10'd0)
+                            ca_read_addr <= (cy * GRID_WIDTH) + cx;  // boundary dummy
                         else
                             ca_read_addr <= (cy * GRID_WIDTH) + (cx - 10'd1);
                         state <= S_GRASS_PULL_WT;
@@ -1484,8 +1563,10 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_write_data <= MAT_SMOKE;
                     state         <= S_NEXT_PIXEL;
                 end else if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE
-                    || ca_read_data == MAT_GRASS || ca_read_data == MAT_GRASS_STATIC) begin
-                    // Empty/smoke/grass below -> fall, consuming grass. The current cell
+                    || ca_read_data == MAT_GRASS || ca_read_data == MAT_GRASS_STATIC
+                    || ca_read_data == MAT_FLOWER_STEM || ca_read_data == MAT_FLOWER_PETAL
+                    || ca_read_data == MAT_FLOWER_BG || ca_read_data == MAT_FLOWER_SEED) begin
+                    // Empty/smoke/grass/flower below -> fall, consuming grass/flower. The current cell
                     // remains empty because the BACK buffer was cleared before this sweep.
                     ca_we         <= 1'b1;
                     ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
@@ -1716,13 +1797,140 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
                 end else begin
-                    // Not ignited -> write MAT_GRASS_STATIC (stay as grass)
+                    // Not ignited -> write back original material
                     ca_we         <= 1'b1;
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
-                    ca_write_data <= MAT_GRASS_STATIC;
+                    ca_write_data <= current_mat;
                 end
                 spread_dir    <= 2'd0;
                 fire_mark_layer <= 4'd0;
+                state <= S_NEXT_PIXEL;
+            end
+
+            // ==================================================
+            // FLOWER SEED & GROWTH physics
+            // S_SEED_DN_WT: wait for M10K read of cell below seed
+            // S_SEED_DN_EV: evaluate below, fall or trigger growth
+            // S_FLOWER_GROW_START: init 5x8 grow loop counters
+            // S_FLOWER_GROW_WT / S_FLOWER_GROW_EV: write each flower cell
+            // S_FLOWER_GROW_DONE: finalize, advance to next pixel
+            // ==================================================
+            S_SEED_DN_WT: state <= S_SEED_DN_EV;
+
+            S_SEED_DN_EV: begin
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_FIRE || (ca_read_data >= MAT_FIRE_1 && ca_read_data <= MAT_FIRE_9)) begin
+                    // Empty/fire below -> seed falls. Remove seed from current cell.
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
+                    ca_write_data <= MAT_FLOWER_SEED;
+                    state         <= S_NEXT_PIXEL;
+                end else if (ca_read_data == MAT_GRASS || ca_read_data == MAT_GRASS_STATIC) begin
+                    // Landed on grass -> trigger 5x8 flower generation.
+                    // Use cx mod 10 to check if centered in a 10-cell grid slot.
+                    if ((cx % 10'd10) == 10'd5) begin
+                        // Centered -> grow flower
+                        // The flower grows centered around the seed position.
+                        // 5x8 flower box: seed at center-bottom of the box.
+                        // Flower top row: cy - 7, Bottom row: cy
+                        // grow_row tracks Y coordinate going from top (cy-7) to bottom (cy)
+                        // flower_row tracks row index within flower (0=top, 7=bottom)
+                        // grow_dx counts from -2 to 2 (left to right)
+                        grow_row <= cy - 10'd7;
+                        grow_dx <= -4'd2;
+                        flower_row <= 4'd0;
+                        state <= S_FLOWER_GROW_START;
+                    end else begin
+                        // Off-center -> just die, replace with empty
+                        state <= S_NEXT_PIXEL;
+                    end
+                end else begin
+                    // Blocked below -> seed disappears
+                    state <= S_NEXT_PIXEL;
+                end
+            end
+
+            S_FLOWER_GROW_START: begin
+                // Read first cell to check before writing
+                // Top-left corner: row grow_row (=cy-7), col cx-2
+                flower_cell <= MAT_FLOWER_BG;  // default
+                ca_read_addr <= (grow_row * GRID_WIDTH) + (cx + grow_dx);
+                state <= S_FLOWER_GROW_WT;
+            end
+
+            S_FLOWER_GROW_WT: state <= S_FLOWER_GROW_EV;
+
+            S_FLOWER_GROW_EV: begin
+                // Determine cell content based on position within 5x8 flower box
+                // flower_row = 0 (top) to 7 (bottom)
+                // grow_dx = -2 (left) to 2 (right)
+                // Stem: column dx=0, rows 4..7 (lower half of flower)
+                // Petals: rows 0..3 (upper half)
+                //   row 0: . X X X .  (dx=-1..1)
+                //   row 1: X X X X X  (all 5)
+                //   row 2: X X X X X  (all 5)
+                //   row 3: . X X X .  (dx=-1..1, dx=0 is hidden by stem)
+                // BG filler: everything else in the 5x8 box
+                if (grow_dx == 4'd0 && flower_row >= 4'd4 && flower_row <= 4'd7) begin
+                    // Stem column in lower half
+                    flower_cell <= MAT_FLOWER_STEM;
+                end else if (flower_row <= 4'd3) begin
+                    // Petal region (top 4 rows)
+                    if (flower_row == 4'd0) begin
+                        // Row 0: only center 3
+                        if (grow_dx >= -4'd1 && grow_dx <= 4'd1)
+                            flower_cell <= MAT_FLOWER_PETAL;
+                        else
+                            flower_cell <= MAT_FLOWER_BG;
+                    end else if (flower_row == 4'd1 || flower_row == 4'd2) begin
+                        // Rows 1,2: full width
+                        flower_cell <= MAT_FLOWER_PETAL;
+                    end else begin
+                        // Row 3: only dx=-1 and dx=1 (dx=0 is stem connection)
+                        if (grow_dx == -4'd1 || grow_dx == 4'd1)
+                            flower_cell <= MAT_FLOWER_PETAL;
+                        else
+                            flower_cell <= MAT_FLOWER_BG;
+                    end
+                end else begin
+                    // Rows 5-7: outside stem column -> BG
+                    flower_cell <= MAT_FLOWER_BG;
+                end
+
+                // Only write if target is empty, grass, flower material, or fire
+                // (avoid overwriting walls, sand, water, etc.)
+                if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_GRASS
+                    || ca_read_data == MAT_GRASS_STATIC || ca_read_data == MAT_FIRE
+                    || (ca_read_data >= MAT_FIRE_1 && ca_read_data <= MAT_FIRE_9)
+                    || ca_read_data == MAT_FLOWER_STEM || ca_read_data == MAT_FLOWER_PETAL
+                    || ca_read_data == MAT_FLOWER_BG || ca_read_data == MAT_FLOWER_SEED) begin
+                    ca_we         <= 1'b1;
+                    ca_write_addr <= (grow_row * GRID_WIDTH) + (cx + grow_dx);
+                    ca_write_data <= flower_cell;
+                end
+
+                // Advance to next cell: move right, or wrap to next row
+                if (grow_dx == 4'd2) begin
+                    // End of row - move to next row (going downward in Y)
+                    grow_dx <= -4'd2;
+                    if (flower_row == 4'd7) begin
+                        // All 8 rows done
+                        state <= S_FLOWER_GROW_DONE;
+                    end else begin
+                        flower_row <= flower_row + 4'd1;
+                        grow_row <= grow_row + 10'd1;
+                        // Read first cell of next row
+                        ca_read_addr <= ((grow_row + 10'd1) * GRID_WIDTH) + (cx - 4'd2);
+                        state <= S_FLOWER_GROW_WT;
+                    end
+                end else begin
+                    // Next column in current row
+                    grow_dx <= grow_dx + 4'd1;
+                    ca_read_addr <= (grow_row * GRID_WIDTH) + (cx + grow_dx + 4'd1);
+                    state <= S_FLOWER_GROW_WT;
+                end
+            end
+
+            S_FLOWER_GROW_DONE: begin
                 state <= S_NEXT_PIXEL;
             end
 
