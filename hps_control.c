@@ -3,6 +3,7 @@
 /// 须与 DE1_SoC_Computer.v 中材质/画布分区一致:
 ///   MAT_SAND=1, MAT_WATER=2, MAT_WALL=3, MAT_FIRE=4, MAT_SMOKE=5
 ///   MAT_GRASS=16, MAT_DIRT=17, MAT_GRASS_STATIC=18
+///   MAT_FLOWER_SEED=19, FLOWER_STEM=20, FLOWER_PETAL=21, FLOWER_BG=22
 ///   逻辑行 y < 200 为画布; y>=200 为底栏(五槽 Wall/Water/Sand/Fire/Smoke)
 /// compile with:
 /// gcc hps_control.c -o hps_control -O2
@@ -36,6 +37,7 @@
 #define MAT_SMOKE 5
 #define MAT_GRASS 16
 #define MAT_DIRT  17
+#define MAT_FLOWER_SEED 19
 #define MAT_GRASS_STATIC 18
 
 // 与 Verilog CANVAS_H 一致：底栏 y=200..239，两行各 20 格
@@ -48,13 +50,13 @@
 const char *material_names[] = {
 	"EMPTY (Eraser)", "SAND", "WATER", "WALL", "FIRE", "SMOKE",
 	"[6]","[7]","[8]","[9]","[10]","[11]","[12]","[13]","[14]","[15]",
-	"GRASS", "DIRT"
+	"GRASS", "DIRT", "[18:STATIC_GRASS]", "FLOWER_SEED"
 };
 
 // 工具栏 2 行 × 5 列，-1 = 空槽
 static const int toolbar_slot_mat[10] = {
 	MAT_WALL,  MAT_WATER, MAT_SAND, MAT_FIRE, MAT_SMOKE, /* row 0 */
-	MAT_GRASS, MAT_DIRT,  -1,       -1,       -1          /* row 1 */
+	MAT_GRASS, MAT_DIRT,  MAT_FLOWER_SEED,       -1,       -1          /* row 1 */
 };
 
 // 全局 PIO 指针
@@ -217,8 +219,10 @@ int main(void)
 						case MAT_WALL:  current_mat_idx = MAT_FIRE;  break;
 						case MAT_FIRE:  current_mat_idx = MAT_SMOKE; break;
 						case MAT_SMOKE: current_mat_idx = MAT_GRASS; break;
-						case MAT_GRASS: current_mat_idx = MAT_DIRT;  break;
-						default:        current_mat_idx = MAT_EMPTY; break;
+					case MAT_GRASS: current_mat_idx = MAT_DIRT;  break;
+					case MAT_DIRT:  current_mat_idx = MAT_FLOWER_SEED;  break;
+					case MAT_FLOWER_SEED: current_mat_idx = MAT_EMPTY; break;
+					default:        current_mat_idx = MAT_EMPTY; break;
 					}
 					fpga_set_brush_material((unsigned int)current_mat_idx);
 					printf(">>> SWITCHED BRUSH TO: [%s] <<<\n",
