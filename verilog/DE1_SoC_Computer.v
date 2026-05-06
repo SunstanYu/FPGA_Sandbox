@@ -1483,9 +1483,10 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     ca_write_addr <= (cy * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_SMOKE;
                     state         <= S_NEXT_PIXEL;
-                end else if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE) begin
-                    // Empty/smoke below -> fall. The current cell remains empty because
-                    // the BACK buffer was cleared before this sweep.
+                end else if (ca_read_data == MAT_EMPTY || ca_read_data == MAT_SMOKE
+                    || ca_read_data == MAT_GRASS || ca_read_data == MAT_GRASS_STATIC) begin
+                    // Empty/smoke/grass below -> fall, consuming grass. The current cell
+                    // remains empty because the BACK buffer was cleared before this sweep.
                     ca_we         <= 1'b1;
                     ca_write_addr <= ((cy + 10'd1) * GRID_WIDTH) + cx;
                     ca_write_data <= MAT_FIRE;
