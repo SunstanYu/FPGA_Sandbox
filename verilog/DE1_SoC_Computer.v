@@ -501,13 +501,14 @@ wire toolbar_divider = (grid_read_x[8:0] >= 9'd63  && grid_read_x[8:0] <= 9'd64)
 
 // ---------- selected slot ----------
 wire toolbar_selected_slot =
-    (!toolbar_row && brush_mat == MAT_WALL  && toolbar_slot == 3'd0) ||
-    (!toolbar_row && brush_mat == MAT_WATER && toolbar_slot == 3'd1) ||
-    (!toolbar_row && brush_mat == MAT_SAND  && toolbar_slot == 3'd2) ||
-    (!toolbar_row && brush_mat == MAT_FIRE  && toolbar_slot == 3'd3) ||
-    (!toolbar_row && brush_mat == MAT_SMOKE && toolbar_slot == 3'd4) ||
-    ( toolbar_row && brush_mat == MAT_GRASS && toolbar_slot == 3'd0) ||
-    ( toolbar_row && brush_mat == MAT_DIRT  && toolbar_slot == 3'd1);
+    (!toolbar_row && brush_mat == MAT_WALL       && toolbar_slot == 3'd0) ||
+    (!toolbar_row && brush_mat == MAT_WATER      && toolbar_slot == 3'd1) ||
+    (!toolbar_row && brush_mat == MAT_SAND       && toolbar_slot == 3'd2) ||
+    (!toolbar_row && brush_mat == MAT_FIRE       && toolbar_slot == 3'd3) ||
+    (!toolbar_row && brush_mat == MAT_SMOKE      && toolbar_slot == 3'd4) ||
+    ( toolbar_row && brush_mat == MAT_GRASS      && toolbar_slot == 3'd0) ||
+    ( toolbar_row && brush_mat == MAT_DIRT       && toolbar_slot == 3'd1) ||
+    ( toolbar_row && brush_mat == MAT_FLOWER_SEED && toolbar_slot == 3'd2);
 
 // Selection border — vertical (left/right edges of slot)
 wire [8:0] sel_x_left  = {toolbar_slot, 6'b0};         // slot * 64
@@ -729,6 +730,34 @@ wire t6_pixel =
   ( (grid_read_x[8:0] == 9'd101) && r1y3 ) |
   ( (grid_read_x[8:0] == 9'd101) && r1y4 );
 
+// SLOT 2 row 1: "SEED" x=151..165  (center of slot 2 = x=160)
+// S(151-153) gap E(155-157) gap E(159-161) gap D(163-165)
+wire t7_pixel =
+  // S
+  ( (grid_read_x[8:0] >= 9'd151 && grid_read_x[8:0] <= 9'd153) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd151) && r1y1 ) |
+  ( (grid_read_x[8:0] >= 9'd151 && grid_read_x[8:0] <= 9'd152) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd153) && r1y3 ) |
+  ( (grid_read_x[8:0] >= 9'd151 && grid_read_x[8:0] <= 9'd153) && r1y4 ) |
+  // E (first)
+  ( (grid_read_x[8:0] >= 9'd155 && grid_read_x[8:0] <= 9'd157) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd155) && r1y1 ) |
+  ( (grid_read_x[8:0] >= 9'd155 && grid_read_x[8:0] <= 9'd156) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd155) && r1y3 ) |
+  ( (grid_read_x[8:0] >= 9'd155 && grid_read_x[8:0] <= 9'd157) && r1y4 ) |
+  // E (second)
+  ( (grid_read_x[8:0] >= 9'd159 && grid_read_x[8:0] <= 9'd161) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd159) && r1y1 ) |
+  ( (grid_read_x[8:0] >= 9'd159 && grid_read_x[8:0] <= 9'd160) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd159) && r1y3 ) |
+  ( (grid_read_x[8:0] >= 9'd159 && grid_read_x[8:0] <= 9'd161) && r1y4 ) |
+  // D
+  ( (grid_read_x[8:0] >= 9'd163 && grid_read_x[8:0] <= 9'd164) && r1y0 ) |
+  ( (grid_read_x[8:0] == 9'd163 || grid_read_x[8:0] == 9'd165) && r1y1 ) |
+  ( (grid_read_x[8:0] == 9'd163 || grid_read_x[8:0] == 9'd165) && r1y2 ) |
+  ( (grid_read_x[8:0] == 9'd163 || grid_read_x[8:0] == 9'd165) && r1y3 ) |
+  ( (grid_read_x[8:0] >= 9'd163 && grid_read_x[8:0] <= 9'd164) && r1y4 );
+
 wire any_text_pixel =
     (in_toolbar && !toolbar_row && toolbar_slot == 3'd0 && in_text_area_r0 && t0_pixel) ||
     (in_toolbar && !toolbar_row && toolbar_slot == 3'd1 && in_text_area_r0 && t1_pixel) ||
@@ -736,7 +765,8 @@ wire any_text_pixel =
     (in_toolbar && !toolbar_row && toolbar_slot == 3'd3 && in_text_area_r0 && t3_pixel) ||
     (in_toolbar && !toolbar_row && toolbar_slot == 3'd4 && in_text_area_r0 && t4_pixel) ||
     (in_toolbar &&  toolbar_row && toolbar_slot == 3'd0 && in_text_area_r1 && t5_pixel) ||
-    (in_toolbar &&  toolbar_row && toolbar_slot == 3'd1 && in_text_area_r1 && t6_pixel);
+    (in_toolbar &&  toolbar_row && toolbar_slot == 3'd1 && in_text_area_r1 && t6_pixel) ||
+    (in_toolbar &&  toolbar_row && toolbar_slot == 3'd2 && in_text_area_r1 && t7_pixel);
 
 // Text colors per slot
 wire [7:0] text_color =
@@ -747,6 +777,7 @@ wire [7:0] text_color =
     (!toolbar_row)                         ? 8'b010_010_00 :  // SMOKE dark
     ( toolbar_row && toolbar_slot == 3'd0) ? 8'b011_111_10 :  // GRASS green
     ( toolbar_row && toolbar_slot == 3'd1) ? 8'b100_011_00 :  // DIRT  brown
+    ( toolbar_row && toolbar_slot == 3'd2) ? 8'b100_000_10 :  // FLOWER_SEED purple
                                              8'b010_010_01;   // empty slot
 
 // Material color preview strips
@@ -756,7 +787,7 @@ wire in_preview_strip =
      (grid_read_y[8:0] >= 9'd234 && grid_read_y[8:0] <= 9'd238 &&  toolbar_row)) &&
     !toolbar_divider &&
     // Row 1: only show preview for assigned slots
-    (!toolbar_row || toolbar_slot == 3'd0 || toolbar_slot == 3'd1);
+    (!toolbar_row || toolbar_slot == 3'd0 || toolbar_slot == 3'd1 || toolbar_slot == 3'd2);
 
 wire [7:0] preview_color =
     (!toolbar_row && toolbar_slot == 3'd0) ? 8'b011_011_01 :  // WALL
@@ -765,7 +796,9 @@ wire [7:0] preview_color =
     (!toolbar_row && toolbar_slot == 3'd3) ? 8'b111_000_00 :  // FIRE
     (!toolbar_row)                         ? 8'b100_100_10 :  // SMOKE
     ( toolbar_row && toolbar_slot == 3'd0) ? 8'b011_111_10 :  // GRASS
-                                             8'b100_011_00;   // DIRT
+    ( toolbar_row && toolbar_slot == 3'd1) ? 8'b100_011_00 :  // DIRT
+    ( toolbar_row && toolbar_slot == 3'd2) ? 8'b100_000_10 :  // FLOWER_SEED purple
+                                             8'b010_010_01;   // empty
 
 // ---------- color logic ----------
 reg [7:0] toolbar_color;
@@ -1181,7 +1214,8 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     // ===========================
                     MAT_GRASS_STATIC: begin
                         // Check Left neighbor first (spread_dir = 0)
-                        spread_dir <= 2'd0;
+                        current_mat     <= MAT_GRASS_STATIC;  // remember original material
+                        spread_dir      <= 2'd0;
                         fire_mark_layer <= 4'd0;  // reused as 'ignited' flag
                         if (cx == 10'd0)
                             ca_read_addr <= (cy * GRID_WIDTH) + cx; // dummy read
@@ -1205,10 +1239,11 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end
 
                     // ===========================
-                    // FLOWER STEM: static, burns like grass
+                    // FLOWER STEM: static, burns like grass (pull model)
                     // ===========================
                     MAT_FLOWER_STEM: begin
-                        spread_dir <= 2'd0;
+                        current_mat     <= MAT_FLOWER_STEM;  // remember original material
+                        spread_dir      <= 2'd0;
                         fire_mark_layer <= 4'd0;
                         if (cx == 10'd0)
                             ca_read_addr <= (cy * GRID_WIDTH) + cx;  // boundary dummy
@@ -1218,10 +1253,11 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end
 
                     // ===========================
-                    // FLOWER PETAL: static, burns like grass
+                    // FLOWER PETAL: static, burns like grass (pull model)
                     // ===========================
                     MAT_FLOWER_PETAL: begin
-                        spread_dir <= 2'd0;
+                        current_mat     <= MAT_FLOWER_PETAL;  // remember original material
+                        spread_dir      <= 2'd0;
                         fire_mark_layer <= 4'd0;
                         if (cx == 10'd0)
                             ca_read_addr <= (cy * GRID_WIDTH) + cx;  // boundary dummy
@@ -1231,10 +1267,11 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                     end
 
                     // ===========================
-                    // FLOWER BG: static filler, burns like grass
+                    // FLOWER BG: static filler, burns like grass (pull model)
                     // ===========================
                     MAT_FLOWER_BG: begin
-                        spread_dir <= 2'd0;
+                        current_mat     <= MAT_FLOWER_BG;  // remember original material
+                        spread_dir      <= 2'd0;
                         fire_mark_layer <= 4'd0;
                         if (cx == 10'd0)
                             ca_read_addr <= (cy * GRID_WIDTH) + cx;  // boundary dummy
@@ -1827,20 +1864,20 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                 end else if (ca_read_data == MAT_GRASS || ca_read_data == MAT_GRASS_STATIC) begin
                     // Landed on grass -> trigger 5x8 flower generation.
                     // Use cx mod 10 to check if centered in a 10-cell grid slot.
-                    if ((cx % 10'd10) == 10'd5) begin
-                        // Centered -> grow flower
-                        // The flower grows centered around the seed position.
+                    // Also require cy >= 7 (room above for 8 rows) and cx in [2,317]
+                    // (room for ±2 columns without wrapping off the canvas edge).
+                    if ((cx % 10'd10) == 10'd5 &&
+                        cy >= 10'd7 &&
+                        cx >= 10'd2 && cx <= GRID_WIDTH - 10'd3) begin
+                        // Centered and enough room -> grow flower
                         // 5x8 flower box: seed at center-bottom of the box.
                         // Flower top row: cy - 7, Bottom row: cy
-                        // grow_row tracks Y coordinate going from top (cy-7) to bottom (cy)
-                        // flower_row tracks row index within flower (0=top, 7=bottom)
-                        // grow_dx counts from -2 to 2 (left to right)
-                        grow_row <= cy - 10'd7;
-                        grow_dx <= -4'd2;
+                        grow_row   <= cy - 10'd7;
+                        grow_dx    <= -4'd2;
                         flower_row <= 4'd0;
                         state <= S_FLOWER_GROW_START;
                     end else begin
-                        // Off-center -> just die, replace with empty
+                        // Off-center, too close to top, or too close to edge -> disappear
                         state <= S_NEXT_PIXEL;
                     end
                 end else begin
@@ -1876,8 +1913,10 @@ always @(posedge M10k_pll or negedge sys_reset_n) begin
                 end else if (flower_row <= 4'd3) begin
                     // Petal region (top 4 rows)
                     if (flower_row == 4'd0) begin
-                        // Row 0: only center 3
-                        if (grow_dx >= -4'd1 && grow_dx <= 4'd1)
+                        // Row 0: only center 3 (dx = -1, 0, +1)
+                        // Use explicit bit-pattern comparison to avoid signed/unsigned pitfall:
+                        // -1 = 4'b1111, 0 = 4'b0000, +1 = 4'b0001
+                        if (grow_dx == -4'd1 || grow_dx == 4'd0 || grow_dx == 4'd1)
                             flower_cell <= MAT_FLOWER_PETAL;
                         else
                             flower_cell <= MAT_FLOWER_BG;
